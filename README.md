@@ -879,6 +879,20 @@ Cookie, `Bearer` e `X-Api-Key` são declarados no documento OpenAPI (`SecuritySc
 
 > **Sem isso o Scalar é uma vitrine.** O gerador de OpenAPI do .NET **não descobre** os esquemas a partir dos handlers registrados — ele não tem como saber que existe um header `X-Api-Key`. O resultado seria uma documentação bonita em que nenhum endpoint protegido funciona: não há onde colar o token, e todo "Send Request" volta 401. É o tipo de defeito que passa despercebido porque a página *parece* certa.
 
+### O CSP: três políticas, e a regra que não se quebra
+
+O `SecurityHeadersMiddleware` emite **três** CSPs diferentes, e a distinção não é preciosismo:
+
+| Resposta | CSP | Por quê |
+|---|---|---|
+| **API** (todo o resto) | `default-src 'none'` | uma resposta JSON não carrega nada, nunca |
+| **`/admin/login`** (nossa) | **nonce**, sem `'unsafe-inline'` | nós escrevemos o HTML, então o nonce funciona — e é a página que recebe **senha** e guarda o cookie de sessão |
+| **`/scalar`, `/jobs`** (de terceiros) | **`'unsafe-inline'`**, sem nonce | elas injetam CSS e JS **em runtime, por JavaScript**, e um nó criado assim **não carrega nonce** |
+
+> ⚠️ **Nonce e `'unsafe-inline'` NUNCA na mesma diretiva.** Pela spec, o navegador **ignora** o `'unsafe-inline'` quando há um nonce presente. Não é um fallback — é uma **anulação**. Mandar os dois juntos deixou a página do Scalar **em branco**, com o console repetindo *"Applying inline style violates the following CSP directive"*. Se você criar uma página nova, decida qual dos dois usar: **um ou outro**.
+
+O `'unsafe-inline'` do Scalar e do Hangfire é uma concessão consciente, e o que a limita é que essas páginas **não refletem entrada de usuário** (renderizam o *nosso* OpenAPI e a *nossa* fila de jobs) e **exigem permissão** — nunca são servidas a um anônimo. A página de login, que é a que recebe texto de fora, fica com o nonce.
+
 ### Defesa em profundidade (opcional)
 
 Nada impede você de pôr **Cloudflare Access** (Zero Trust) na frente de `/jobs`, `/scalar` e `/admin/*` — a autenticação acontece na borda, e o request só chega na aplicação se passar. A permissão continua valendo por baixo, então nenhuma das duas camadas é o único ponto de falha.
