@@ -1,0 +1,32 @@
+# Build artifacts — o build acontece dentro do container
+**/bin/
+**/obj/
+**/out/
+artifacts/
+
+# IDE
+**/.vs/
+**/.vscode/
+**/.idea/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Testes (não vão para a imagem de runtime)
+tests/
+
+# Segredos — NUNCA entram na imagem.
+# Em produção eles são montados como volume ou vêm do Secret Manager.
+**/secrets/
+**/*.pem
+**/*.key
+**/*.pfx
+.env
+.env.*
+**/appsettings.secrets.json
+
+# Docs
+**/*.md
+docs/

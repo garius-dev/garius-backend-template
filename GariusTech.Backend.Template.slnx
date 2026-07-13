@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Garius.Api/Garius.Api.csproj" />
+    <Project Path="src/Garius.Core/Garius.Core.csproj" />
+    <Project Path="src/Garius.Infrastructure/Garius.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Garius.Tests/Garius.Tests.csproj" />
+  </Folder>
+</Solution>

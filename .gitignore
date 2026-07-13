@@ -1,0 +1,58 @@
+## Build
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+artifacts/
+*.user
+*.suo
+*.userprefs
+
+## IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Testes / cobertura
+[Tt]est[Rr]esult*/
+coverage*.json
+coverage*.xml
+*.coverage
+
+## ---------------------------------------------------------------------------
+## SEGREDOS — nada abaixo daqui entra no git.
+##
+## Regra: NUNCA adicionar uma exceção com "!" para um arquivo de credencial real.
+## O template anterior tinha `!docker/**/secrets/gcp-service-account.json`, o que
+## des-ignorava exatamente o arquivo com a chave do GCP. Arquivos de exemplo usam
+## o sufixo `.example` e são versionados por essa extensão, nunca por exceção.
+## ---------------------------------------------------------------------------
+
+# Chaves de service account do GCP, em qualquer lugar
+**/gcp-service-account.json
+**/service-account*.json
+**/*-credentials.json
+
+# Diretórios de secrets montados no container
+**/secrets/*
+!**/secrets/*.example
+!**/secrets/.gitkeep
+
+# Segredos locais
+.env
+.env.*
+!.env.example
+appsettings.secrets.json
+appsettings.*.local.json
+
+# Chaves e certificados
+*.pem
+*.key
+*.pfx
+*.p12
+!*.example.pem

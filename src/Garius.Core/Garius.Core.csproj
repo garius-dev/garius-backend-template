@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Domínio, regras e contratos.
+    NÃO referencia Infrastructure nem Api, e não conhece EF, Redis, HTTP ou qualquer
+    detalhe de infra. Se um using de infra aparecer aqui, a dependência está invertida.
+  -->
+
+  <ItemGroup>
+    <PackageReference Include="FluentValidation" />
+    <!--
+      Só as ENTIDADES do Identity (IdentityUser, IdentityRole). Não arrasta ASP.NET Core:
+      o domínio continua sem conhecer HTTP.
+    -->
+    <PackageReference Include="Microsoft.Extensions.Identity.Stores" />
+  </ItemGroup>
+
+</Project>

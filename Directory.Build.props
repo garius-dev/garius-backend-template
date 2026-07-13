@@ -1,0 +1,46 @@
+<Project>
+
+  <!--
+    Propriedades aplicadas a TODOS os projetos da solution.
+    Ver Directory.Packages.props para as versões dos pacotes.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!--
+      Warning vira erro. Num template replicado em N projetos, um warning ignorado
+      hoje é um bug herdado por todos eles. O custo de disciplina é pago uma vez.
+    -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!--
+      Auditoria de segurança dos pacotes durante o restore.
+      Combinado com TreatWarningsAsErrors, um pacote com CVE conhecido QUEBRA o build
+      em vez de virar uma surpresa em produção.
+    -->
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <NuGetAuditLevel>low</NuGetAuditLevel>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Build reproduzível e rastreável até o commit -->
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- CS1591: membro público sem comentário XML. Ruído demais para um template. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+</Project>

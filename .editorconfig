@@ -1,0 +1,109 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{json,yml,yaml,csproj,props,targets,slnx}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.cs]
+# Usings
+dotnet_sort_system_directives_first = true
+csharp_using_directive_placement = outside_namespace:warning
+
+# Namespaces file-scoped (menos ruído de indentação)
+csharp_style_namespace_declarations = file_scoped:warning
+
+# var
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = false:suggestion
+
+# Modernidade
+csharp_style_expression_bodied_methods = when_on_single_line:suggestion
+csharp_prefer_braces = true:warning
+csharp_style_prefer_primary_constructors = true:suggestion
+csharp_style_prefer_switch_expression = true:suggestion
+
+# this.
+dotnet_style_qualification_for_field = false:warning
+dotnet_style_qualification_for_property = false:warning
+dotnet_style_qualification_for_method = false:warning
+
+# Imutabilidade
+dotnet_style_readonly_field = true:warning
+csharp_prefer_static_local_function = true:suggestion
+
+# Nomenclatura: interfaces com I
+dotnet_naming_rule.interfaces_start_with_i.symbols = interface
+dotnet_naming_rule.interfaces_start_with_i.style = begins_with_i
+dotnet_naming_rule.interfaces_start_with_i.severity = warning
+dotnet_naming_symbols.interface.applicable_kinds = interface
+dotnet_naming_style.begins_with_i.required_prefix = I
+dotnet_naming_style.begins_with_i.capitalization = pascal_case
+
+# Nomenclatura: campos privados com _
+dotnet_naming_rule.private_fields_underscore.symbols = private_field
+dotnet_naming_rule.private_fields_underscore.style = underscore_camel
+dotnet_naming_rule.private_fields_underscore.severity = warning
+dotnet_naming_symbols.private_field.applicable_kinds = field
+dotnet_naming_symbols.private_field.applicable_accessibilities = private
+dotnet_naming_style.underscore_camel.required_prefix = _
+dotnet_naming_style.underscore_camel.capitalization = camel_case
+
+# ConfigureAwait: irrelevante em ASP.NET Core (não há SynchronizationContext)
+dotnet_diagnostic.CA2007.severity = none
+
+# Análise: só o que importa
+dotnet_diagnostic.CA1848.severity = none   # LoggerMessage delegates: ruído para um template
+dotnet_diagnostic.CA1515.severity = none   # tipos públicos em app (não é lib)
+
+# ---------------------------------------------------------------------------
+# Regras de design de BIBLIOTECA PÚBLICA, desligadas com motivo.
+# Existem para quem publica um NuGet consumido por outras linguagens (VB.NET).
+# Esta é uma aplicação, e seguir estas regras aqui pioraria o código.
+# ---------------------------------------------------------------------------
+
+# CA1000: membro estático em tipo genérico.
+# Result<T>.Success(x) / ApiResponse<T>.Ok(x) são o padrão idiomático do C# moderno.
+dotnet_diagnostic.CA1000.severity = none
+
+# CA1716: nome de tipo conflita com keyword reservada (Error é keyword em VB.NET).
+# `Error` é o nome certo para o conceito e não vamos renomeá-lo por causa do VB.
+dotnet_diagnostic.CA1716.severity = none
+
+# CA1711: sufixo reservado em nome de tipo.
+# `Permission` é o nome exato do conceito no modelo de autorização (recurso.ação, como no
+# Google Cloud IAM). A regra existe para evitar confusão com tipos do framework — aqui não há.
+dotnet_diagnostic.CA1711.severity = none
+
+# CA1822: membro pode ser estático.
+# ApiResponse.Success PRECISA ser propriedade de instância — é o que serializa
+# "success": true no JSON de resposta.
+dotnet_diagnostic.CA1822.severity = suggestion
+
+# CA1873: "avaliar este argumento de log pode ser caro".
+# A regra não distingue uma propriedade computada de um campo simples. As nossas são
+# campos (DatabaseNaming calcula tudo no construtor), então não há custo a evitar.
+dotnet_diagnostic.CA1873.severity = suggestion
+
+[tests/**/*.cs]
+# Testes podem ter nomes e assinaturas menos rígidos
+dotnet_diagnostic.CA1707.severity = none   # underscore em nome de método de teste
+
+# ---------------------------------------------------------------------------
+# Migrations são GERADAS pelo `dotnet ef`, não escritas à mão. Aplicar regras de
+# estilo aqui só faria o build quebrar a cada migration nova, sem nenhum ganho.
+# ---------------------------------------------------------------------------
+[**/Database/Migrations/**.cs]
+generated_code = true
+dotnet_analyzer_diagnostic.severity = none
+dotnet_diagnostic.IDE0161.severity = none
+dotnet_diagnostic.CA1861.severity = none

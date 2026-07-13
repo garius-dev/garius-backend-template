@@ -1,0 +1,92 @@
+<Project>
+
+  <!--
+    Versionamento central de pacotes (CPM).
+    Os .csproj referenciam pacotes SEM versão; a versão mora aqui, uma única vez.
+    Isso é o que impede que apps derivadas deste template divirjam de versão.
+  -->
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <ItemGroup Label="ASP.NET Core / OpenAPI">
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.9" />
+    <PackageVersion Include="Scalar.AspNetCore" Version="2.16.11" />
+    <!--
+      Pin transitivo de segurança: Microsoft.AspNetCore.OpenApi 10.0.9 traz
+      Microsoft.OpenApi 2.0.0, que tem vulnerabilidade HIGH (GHSA-v5pm-xwqc-g5wc —
+      DoS por referência circular de schema).
+
+      Fica na linha 2.x (corrigida a partir da 2.7.5). NÃO subir para 3.x: a 3.x tem
+      breaking change (IOpenApiMediaType.Example virou read-only) e o source generator
+      do Microsoft.AspNetCore.OpenApi 10.0.9 é compilado contra a 2.x — o build quebra.
+
+      Remover este pin quando o ASP.NET passar a trazer uma versão já corrigida.
+    -->
+    <PackageVersion Include="Microsoft.OpenApi" Version="2.10.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="Persistência">
+    <PackageVersion Include="Npgsql" Version="10.0.3" />
+    <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.9" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.9" />
+  </ItemGroup>
+
+  <ItemGroup Label="Identity / Auth">
+    <!--
+      Identity.Stores traz apenas as ENTIDADES (IdentityUser, IdentityRole) e o UserManager,
+      sem arrastar ASP.NET Core. É o que permite que Garius.Core (o domínio) declare
+      ApplicationUser sem passar a conhecer HTTP — a dependência ficaria invertida.
+    -->
+    <PackageVersion Include="Microsoft.Extensions.Identity.Stores" Version="10.0.9" />
+    <PackageVersion Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.9" />
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.9" />
+
+    <!--
+      Emissão do JWT (JwtSecurityTokenHandler). O JwtBearer traz a VALIDAÇÃO; para EMITIR
+      o token é preciso este pacote, e ele mora na Infrastructure (onde está o JwtIssuer).
+    -->
+    <PackageVersion Include="System.IdentityModel.Tokens.Jwt" Version="8.16.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="Redis / Data Protection">
+    <PackageVersion Include="StackExchange.Redis" Version="3.0.17" />
+    <PackageVersion Include="Microsoft.AspNetCore.DataProtection.StackExchangeRedis" Version="10.0.9" />
+  </ItemGroup>
+
+  <ItemGroup Label="Background jobs">
+    <PackageVersion Include="Hangfire.AspNetCore" Version="1.8.23" />
+    <PackageVersion Include="Hangfire.PostgreSql" Version="1.21.1" />
+  </ItemGroup>
+
+  <ItemGroup Label="Observabilidade">
+    <PackageVersion Include="Serilog.AspNetCore" Version="10.0.0" />
+    <PackageVersion Include="Serilog.Sinks.Grafana.Loki" Version="9.0.1" />
+    <PackageVersion Include="Serilog.Enrichers.Environment" Version="3.0.1" />
+    <PackageVersion Include="AspNetCore.HealthChecks.NpgSql" Version="9.0.0" />
+    <PackageVersion Include="AspNetCore.HealthChecks.Redis" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="Configuração / Secrets">
+    <PackageVersion Include="Google.Cloud.SecretManager.V1" Version="2.7.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="Validação">
+    <PackageVersion Include="FluentValidation" Version="12.1.1" />
+    <PackageVersion Include="FluentValidation.DependencyInjectionExtensions" Version="12.1.1" />
+  </ItemGroup>
+
+  <ItemGroup Label="Testes">
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageVersion Include="xunit.v3" Version="3.2.2" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.9" />
+    <PackageVersion Include="Testcontainers.PostgreSql" Version="4.13.0" />
+    <PackageVersion Include="Testcontainers.Redis" Version="4.13.0" />
+    <PackageVersion Include="Shouldly" Version="4.3.0" />
+  </ItemGroup>
+
+</Project>

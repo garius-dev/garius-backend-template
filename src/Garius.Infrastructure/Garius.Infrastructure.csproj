@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Implementa os contratos do Core: EF/Postgres, Redis, Secret Manager, cripto.
+    Referencia o framework do ASP.NET Core (IConfiguration, DataProtection, Identity)
+    sem ser um host — por isso FrameworkReference, e não o SDK Web.
+  -->
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Expõe os internals (interceptors, resolvers) para os testes de integração -->
+    <InternalsVisibleTo Include="Garius.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Garius.Core\Garius.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Label="Persistência">
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup Label="Identity / Auth">
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" />
+
+    <!-- Emissão do JWT de máquina (JwtIssuer). A validação fica na Api, com o JwtBearer. -->
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" />
+  </ItemGroup>
+
+  <ItemGroup Label="Redis / Data Protection">
+    <PackageReference Include="StackExchange.Redis" />
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection.StackExchangeRedis" />
+  </ItemGroup>
+
+  <ItemGroup Label="Configuração / Secrets">
+    <PackageReference Include="Google.Cloud.SecretManager.V1" />
+  </ItemGroup>
+
+</Project>
