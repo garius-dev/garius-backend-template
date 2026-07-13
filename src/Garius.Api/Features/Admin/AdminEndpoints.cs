@@ -98,7 +98,7 @@ public static class AdminEndpoints
 
         group.MapPost("/logout", async (HttpContext http, AuthService auth, CancellationToken ct) =>
         {
-            var token = http.Request.Cookies[CookieAuthSetup.RefreshCookieName];
+            var token = http.Request.Cookies[CookieAuthSetup.RefreshCookie(http.Environment())];
 
             await auth.LogoutAsync(token, ct);
 

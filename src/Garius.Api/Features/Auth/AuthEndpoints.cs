@@ -67,7 +67,7 @@ public static class AuthEndpoints
             HttpContext http,
             CancellationToken ct) =>
         {
-            var token = http.Request.Cookies[CookieAuthSetup.RefreshCookieName];
+            var token = http.Request.Cookies[CookieAuthSetup.RefreshCookie(http.Environment())];
 
             return string.IsNullOrWhiteSpace(token)
                 ? Result<LoginResponse>
@@ -88,7 +88,7 @@ public static class AuthEndpoints
             HttpContext http,
             CancellationToken ct) =>
         {
-            var token = http.Request.Cookies[CookieAuthSetup.RefreshCookieName];
+            var token = http.Request.Cookies[CookieAuthSetup.RefreshCookie(http.Environment())];
 
             return (await auth.LogoutAsync(token, ct)).ToHttpResult(http);
         })

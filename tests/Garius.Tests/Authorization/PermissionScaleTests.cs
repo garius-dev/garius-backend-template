@@ -143,7 +143,7 @@ public class PermissionScaleTests(DatabaseFixture fixture) : IClassFixture<Datab
         var user = await CreateUserWithManyPermissionsAsync(scope);
 
         var cookie = ProtectTicket(scope, BuildPrincipal(user.Id));
-        var header = $"__Host-garius.auth={cookie}";
+        var header = $"garius.auth={cookie}";
 
         Encoding.UTF8.GetByteCount(header).ShouldBeLessThan(
             8192,

@@ -57,13 +57,27 @@ internal static class CsrfProtection
     /// </summary>
     internal const string RequestTokenCookieName = "garius.csrf-token";
 
+    /// <summary>
+    /// ⚠️ Em desenvolvimento o prefixo <c>__Host-</c> cai — ele exige <c>Secure</c>, e em
+    /// <c>http://localhost</c> o navegador <b>descarta o cookie em silêncio</b>. Mesma armadilha
+    /// do cookie de sessão; ver <see cref="CookieAuthSetup.AuthCookie"/>.
+    /// </summary>
+    internal static string CsrfCookie(IHostEnvironment environment)
+    {
+        ArgumentNullException.ThrowIfNull(environment);
+
+        return environment.IsDevelopment()
+            ? CookieName.Replace("__Host-", string.Empty, StringComparison.Ordinal)
+            : CookieName;
+    }
+
     internal static IServiceCollection AddCsrfProtection(
         this IServiceCollection services,
         IHostEnvironment environment)
     {
         services.AddAntiforgery(options =>
         {
-            options.Cookie.Name = CookieName;
+            options.Cookie.Name = CsrfCookie(environment);
 
             // Este cookie guarda o SEGREDO do antiforgery — é HttpOnly. O valor que o front
             // reenvia é outro (o request token), publicado em RequestTokenCookieName.
@@ -186,6 +200,6 @@ internal static class CsrfProtection
         }
 
         // Só faz sentido validar se HÁ um cookie de sessão para ser explorado.
-        return context.Request.Cookies.ContainsKey(CookieAuthSetup.CookieName);
+        return context.Request.Cookies.ContainsKey(CookieAuthSetup.AuthCookie(context.Environment()));
     }
 }

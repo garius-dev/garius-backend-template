@@ -178,7 +178,7 @@ public sealed class AuthService(
 
         await http.SignOutAsync(CookieAuthSetup.SchemeName);
 
-        http.Response.Cookies.Delete(CookieAuthSetup.RefreshCookieName);
+        http.Response.Cookies.Delete(CookieAuthSetup.RefreshCookie(environment));
 
         return Result.Success();
     }
@@ -265,7 +265,7 @@ public sealed class AuthService(
 
         // O refresh token vai num cookie SEPARADO do de sessão.
         http.Response.Cookies.Append(
-            CookieAuthSetup.RefreshCookieName,
+            CookieAuthSetup.RefreshCookie(environment),
             refreshToken.Token,
             new CookieOptions
             {

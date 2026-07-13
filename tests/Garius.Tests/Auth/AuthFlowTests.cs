@@ -49,8 +49,12 @@ public class AuthFlowTests(ApiFactory factory)
 
         // O cookie de SESSÃO é HttpOnly: o JavaScript não pode lê-lo, então um XSS não rouba
         // a sessão.
+        //
+        // Sem o prefixo __Host- porque a ApiFactory roda em DEVELOPMENT: o prefixo exige a flag
+        // Secure, e em HTTP puro o navegador descartaria o cookie em silêncio. Em produção o
+        // prefixo volta. Ver CookiePrefixTests.
         var session = cookies
-            .Single(c => c.StartsWith("__Host-garius.auth=", StringComparison.Ordinal));
+            .Single(c => c.StartsWith("garius.auth=", StringComparison.Ordinal));
         session.ShouldContain("HttpOnly");
 
         // O request token de CSRF NÃO é HttpOnly — de propósito: o front precisa lê-lo para
@@ -208,7 +212,7 @@ public class AuthFlowTests(ApiFactory factory)
         var login = await client.PostAsJsonAsync(
             "/auth/login", new { email, password = Password }, TestContext.Current.CancellationToken);
 
-        var refreshToken = ExtractCookie(login, "__Host-garius.refresh");
+        var refreshToken = ExtractCookie(login, "garius.refresh");
         refreshToken.ShouldNotBeNullOrEmpty();
 
         // Sem cookie de SESSÃO, só o de refresh: o CSRF não se aplica (não há sessão ambiente
@@ -216,18 +220,18 @@ public class AuthFlowTests(ApiFactory factory)
         //
         // O ATACANTE roubou o token e o usa primeiro. Ele funciona — é um token válido.
         var attacker = factory.CreateClient();
-        attacker.DefaultRequestHeaders.Add("Cookie", $"__Host-garius.refresh={refreshToken}");
+        attacker.DefaultRequestHeaders.Add("Cookie", $"garius.refresh={refreshToken}");
 
         var attackerRefresh = await attacker.PostAsync(
             "/auth/refresh", null, TestContext.Current.CancellationToken);
 
         attackerRefresh.StatusCode.ShouldBe(HttpStatusCode.OK);
 
-        var attackerNewToken = ExtractCookie(attackerRefresh, "__Host-garius.refresh");
+        var attackerNewToken = ExtractCookie(attackerRefresh, "garius.refresh");
 
         // A VÍTIMA tenta renovar com o token dela — o mesmo, agora já consumido. Reuso.
         var victim = factory.CreateClient();
-        victim.DefaultRequestHeaders.Add("Cookie", $"__Host-garius.refresh={refreshToken}");
+        victim.DefaultRequestHeaders.Add("Cookie", $"garius.refresh={refreshToken}");
 
         var victimRefresh = await victim.PostAsync(
             "/auth/refresh", null, TestContext.Current.CancellationToken);
@@ -238,7 +242,7 @@ public class AuthFlowTests(ApiFactory factory)
 
         // E o token que o ATACANTE conquistou morreu junto: a família inteira foi revogada.
         var attackerAgain = factory.CreateClient();
-        attackerAgain.DefaultRequestHeaders.Add("Cookie", $"__Host-garius.refresh={attackerNewToken}");
+        attackerAgain.DefaultRequestHeaders.Add("Cookie", $"garius.refresh={attackerNewToken}");
 
         var attackerSecondTry = await attackerAgain.PostAsync(
             "/auth/refresh", null, TestContext.Current.CancellationToken);

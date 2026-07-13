@@ -33,6 +33,51 @@ internal static class CookieAuthSetup
     /// <summary>O refresh token, num cookie separado e restrito à rota de refresh.</summary>
     internal const string RefreshCookieName = "__Host-garius.refresh";
 
+    /// <summary>
+    /// ⚠️ Em <b>desenvolvimento</b> o prefixo <c>__Host-</c> TEM de cair, e isto não é um
+    /// relaxamento gratuito — é o que faz o login funcionar.
+    ///
+    /// <para>
+    /// O prefixo <b>exige</b> a flag <c>Secure</c>. Em <c>http://localhost</c> não há HTTPS,
+    /// então o cookie sai sem <c>Secure</c> — e o navegador <b>descarta em silêncio</b> um
+    /// cookie <c>__Host-</c> sem ela. O resultado era um <b>loop de redirecionamento</b>: o
+    /// login autenticava (o log dizia <c>login.success</c>!), o <c>Set-Cookie</c> ia na
+    /// resposta, o navegador jogava fora, e <c>/scalar</c> devolvia para o login. Sem um único
+    /// erro em lugar nenhum.
+    /// </para>
+    ///
+    /// <para>
+    /// Em <b>produção</b> o prefixo volta, e com ele toda a proteção: lá há HTTPS, e a política
+    /// é <c>CookieSecurePolicy.Always</c>.
+    /// </para>
+    /// </summary>
+    internal static string AuthCookie(IHostEnvironment environment) =>
+        Strip(CookieName, environment);
+
+    /// <inheritdoc cref="AuthCookie"/>
+    internal static string RefreshCookie(IHostEnvironment environment) =>
+        Strip(RefreshCookieName, environment);
+
+    private static string Strip(string name, IHostEnvironment environment)
+    {
+        ArgumentNullException.ThrowIfNull(environment);
+
+        return environment.IsDevelopment()
+            ? name.Replace("__Host-", string.Empty, StringComparison.Ordinal)
+            : name;
+    }
+
+    /// <summary>
+    /// O <see cref="IHostEnvironment"/> a partir do request — para os endpoints, que leem o nome
+    /// do cookie e não têm o ambiente injetado.
+    /// </summary>
+    internal static IHostEnvironment Environment(this HttpContext http)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+
+        return http.RequestServices.GetRequiredService<IHostEnvironment>();
+    }
+
     internal static IServiceCollection AddCookieAuthentication(
         this IServiceCollection services,
         IHostEnvironment environment,
@@ -56,7 +101,7 @@ internal static class CookieAuthSetup
                 // Ver MachineAuthSetup.SelectScheme.
                 options.ForwardDefaultSelector = MachineAuthSetup.SelectScheme;
 
-                options.Cookie.Name = CookieName;
+                options.Cookie.Name = AuthCookie(environment);
 
                 options.Cookie.HttpOnly = true;
                 options.Cookie.SameSite = SameSiteMode.Lax;
