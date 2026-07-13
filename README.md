@@ -20,6 +20,7 @@ Template backend .NET 10 para APIs de produção. Foco em segurança e integraç
 - [Autenticação (para o frontend)](#autenticação-para-o-frontend)
 - [Autenticação de máquina (M2M e terceiros)](#autenticação-de-máquina-m2m-e-terceiros)
 - [Rate limit, idempotência e jobs](#rate-limit-idempotência-e-jobs)
+- [Documentação e painel de jobs](#documentação-e-painel-de-jobs)
 - [Eventos de domínio (outbox)](#eventos-de-domínio-outbox)
 - [Dados pessoais (LGPD)](#dados-pessoais-lgpd)
 - [Deploy](#deploy)
@@ -29,7 +30,7 @@ Template backend .NET 10 para APIs de produção. Foco em segurança e integraç
 
 ## Estado atual
 
-Este template está em construção. **O que está aqui, está pronto e testado** (149 testes, contra Postgres e Redis reais).
+**Tudo o que está aqui está pronto e testado** — 166 testes contra Postgres e Redis reais (Testcontainers), build estrito (warnings = erro) e auditoria de CVE no build.
 
 | Área | Estado |
 |---|---|
@@ -49,7 +50,9 @@ Este template está em construção. **O que está aqui, está pronto e testado*
 | Idempotência (`Idempotency-Key`) | ✅ |
 | Hangfire (dashboard protegido por permissão) | ✅ |
 | Outbox transacional | ✅ |
-| Scalar (documentação) | ⏳ Fase 6 |
+| Documentação (Scalar) e painel de jobs, protegidos por permissão | ✅ |
+
+**O template está completo.**
 
 Não documente aqui o que ainda não existe. Documentação que mente é pior que documentação ausente.
 
@@ -801,7 +804,47 @@ BackgroundJob.Enqueue<IEmailSender>(x => x.SendAsync(userId, CancellationToken.N
 RecurringJob.AddOrUpdate<Report>("diario", r => r.RunAsync(CancellationToken.None), Cron.Daily);
 ```
 
-> ⚠️ **O dashboard não é só leitura: ele permite DISPARAR e APAGAR jobs.** Exposto sem autenticação — que é o comportamento **padrão** do Hangfire fora de localhost — ele vira execução remota de código. Aqui ele exige a permissão `jobs.read`, pelo mesmo modelo de autorização de todo o resto.
+> ⚠️ **O dashboard não é só leitura: ele permite DISPARAR e APAGAR jobs.** Exposto sem autenticação — que é o comportamento **padrão** do Hangfire fora de localhost — ele vira execução remota de código. Aqui ele exige a permissão `jobs.read`, pelo mesmo modelo de autorização de todo o resto. Ver [Documentação e painel de jobs](#documentação-e-painel-de-jobs).
+
+---
+
+## Documentação e painel de jobs
+
+Duas páginas, **acessíveis em produção sem ficarem abertas**:
+
+| Página | Exige | O que é |
+|---|---|---|
+| `/scalar` | `docs.read` | A documentação da API (OpenAPI + Scalar) |
+| `/openapi/v1.json` | `docs.read` | O documento OpenAPI cru |
+| `/jobs` | `jobs.read` | O painel do Hangfire |
+
+### Como entrar
+
+Abra qualquer uma delas no navegador. Sem sessão, você é redirecionado para **`/admin/login`** — um formulário mínimo que chama o **mesmo `AuthService`** do `/auth/login`, e portanto herda o lockout por conta, o rate limit por IP e o mesmo cookie `HttpOnly`. Depois de logar, você volta para onde estava indo.
+
+> **Por que uma página de login, e não só o cookie da API.** O cookie funciona — mas ele só é emitido pelo `POST /auth/login`, que é uma chamada de *API*. Sem a página, acessar `/jobs` em produção exigiria logar no Postman, copiar o cookie e injetá-lo à mão no navegador. Funciona, e é exatamente o tipo de atrito que faz alguém abrir o dashboard "temporariamente" e nunca mais fechar.
+
+> **A página não inventa autenticação nenhuma.** Um segundo caminho de login seria um segundo lugar para esquecer uma defesa.
+
+### Por que a documentação exige permissão
+
+Ela é o **mapa completo** da aplicação: todos os endpoints, parâmetros, esquemas de autenticação e códigos de erro. Servida a anônimos, é reconhecimento pronto — um atacante não precisa descobrir nada, basta ler.
+
+**Não há flag de liga/desliga.** Uma `ScalarEnabled: false` daria a *impressão* de proteger, e alguém a deixaria ligada num ambiente exposto. A proteção é a permissão, e ela vale igual em todos os ambientes.
+
+Se a sua API for **deliberadamente pública** (como a do Stripe), troque o `.RequirePermission(...)` por `.AllowAnonymous()` em `OpenApiSetup` — mas que seja uma decisão, não um esquecimento.
+
+> O **JSON** do OpenAPI exige a mesma permissão que a página. Proteger só a página seria teatro: bastaria pedir o JSON direto para obter exatamente a mesma informação.
+
+### Os três esquemas de autenticação estão no Scalar
+
+Cookie, `Bearer` e `X-Api-Key` são declarados no documento OpenAPI (`SecuritySchemesTransformer`) — então dá para **testar um endpoint protegido pela própria página**, colando o token.
+
+> **Sem isso o Scalar é uma vitrine.** O gerador de OpenAPI do .NET **não descobre** os esquemas a partir dos handlers registrados — ele não tem como saber que existe um header `X-Api-Key`. O resultado seria uma documentação bonita em que nenhum endpoint protegido funciona: não há onde colar o token, e todo "Send Request" volta 401. É o tipo de defeito que passa despercebido porque a página *parece* certa.
+
+### Defesa em profundidade (opcional)
+
+Nada impede você de pôr **Cloudflare Access** (Zero Trust) na frente de `/jobs`, `/scalar` e `/admin/*` — a autenticação acontece na borda, e o request só chega na aplicação se passar. A permissão continua valendo por baixo, então nenhuma das duas camadas é o único ponto de falha.
 
 ---
 

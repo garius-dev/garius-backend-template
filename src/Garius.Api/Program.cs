@@ -4,6 +4,8 @@ using Garius.Api.Features.Machine;
 using Garius.Api.Features.Permissions;
 using Garius.Api.Infrastructure.Authorization;
 using Garius.Api.Infrastructure.Database;
+using Garius.Api.Features.Admin;
+using Garius.Api.Infrastructure.Documentation;
 using Garius.Api.Infrastructure.Errors;
 using Garius.Api.Infrastructure.Health;
 using Garius.Api.Infrastructure.Idempotency;
@@ -118,7 +120,9 @@ builder.Services.AddBackgroundJobs(naming);
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 
-builder.Services.AddOpenApi();
+// OpenAPI + Scalar. O transformer declara os TRÊS esquemas de auth (cookie, Bearer,
+// X-Api-Key) — sem ele, nenhum endpoint protegido é testável pela própria página.
+builder.Services.AddApiDocumentation();
 
 var app = builder.Build();
 
@@ -189,11 +193,13 @@ app.MapAuthEndpoints();
 app.MapMachineEndpoints();
 app.MapPermissionEndpoints();
 
-if (app.Configuration.GetValue<bool>("Api:ScalarEnabled"))
-{
-    app.MapOpenApi();
-    // Fase 6: app.MapScalarApiReference();
-}
+// Login das páginas administrativas (/jobs e /scalar), que são HTML abertas no NAVEGADOR.
+// Reusa o AuthService — mesmo lockout, mesmo rate limit, mesmo cookie. Ver AdminEndpoints.
+app.MapAdminEndpoints();
+
+// Documentação (Scalar). Protegida por docs.read INCLUSIVE EM PRODUÇÃO: a documentação é o
+// mapa completo da API, e servi-la a anônimos é entregar reconhecimento pronto.
+app.MapApiDocumentation();
 
 // AllowAnonymous é obrigatório: a FallbackPolicy exige autenticação em todo endpoint que
 // não declare o contrário. É a falha FECHADA — esquecer de proteger um endpoint novo o

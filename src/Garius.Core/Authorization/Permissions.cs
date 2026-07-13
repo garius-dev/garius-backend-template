@@ -89,6 +89,28 @@ public static class Permissions
     }
 
     /// <summary>
+    /// A documentação da API (Scalar).
+    ///
+    /// <para>
+    /// <b>Por que a documentação exige permissão.</b> Ela é o <b>mapa completo</b> da aplicação:
+    /// todos os endpoints, todos os parâmetros, todos os esquemas de autenticação, todos os
+    /// códigos de erro. Servida a anônimos, é reconhecimento pronto — um atacante não precisa
+    /// descobrir nada, basta ler.
+    /// </para>
+    ///
+    /// <para>
+    /// Isso não é paranoia com uma API interna: é o mesmo raciocínio pelo qual
+    /// <c>/health/detail</c> exige uma chave. Se a sua API for <b>deliberadamente pública</b>
+    /// (como a do Stripe ou a do GitHub), troque para <c>.AllowAnonymous()</c> — mas que seja
+    /// uma decisão, não um esquecimento.
+    /// </para>
+    /// </summary>
+    public static class Docs
+    {
+        public static readonly Permission Read = new("docs", "read", "Ver a documentação da API");
+    }
+
+    /// <summary>
     /// Leitura de dados pessoais em claro (LGPD). Uma por categoria: quem vê o e-mail não
     /// necessariamente vê o CPF.
     /// </summary>

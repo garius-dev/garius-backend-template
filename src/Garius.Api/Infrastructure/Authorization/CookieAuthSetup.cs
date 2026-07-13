@@ -76,8 +76,26 @@ internal static class CookieAuthSetup
                 // Uma API JSON não redireciona para tela de login: devolve 401/403. Sem isto,
                 // o ASP.NET responderia 302 para /Account/Login — que não existe — e o
                 // frontend receberia um HTML onde esperava um erro.
+                //
+                // A EXCEÇÃO são as páginas administrativas (/jobs, /scalar), que são HTML
+                // aberto no NAVEGADOR: ali um 401 sem corpo é uma tela em branco, e o
+                // administrador não tem para onde ir.
+                //
+                // A distinção é pelo `Accept` do request, e não por uma lista de rotas: um
+                // navegador pede text/html, um cliente de API pede application/json. Uma lista
+                // de rotas seria mais uma coisa para alguém esquecer de atualizar ao criar a
+                // próxima página admin — e o esquecimento apareceria como uma tela em branco
+                // inexplicável, não como um erro.
                 options.Events.OnRedirectToLogin = context =>
                 {
+                    if (WantsHtml(context.Request))
+                    {
+                        context.Response.Redirect(
+                            $"/admin/login?returnUrl={Uri.EscapeDataString(context.Request.Path)}");
+
+                        return Task.CompletedTask;
+                    }
+
                     context.Response.StatusCode = StatusCodes.Status401Unauthorized;
 
                     return Task.CompletedTask;
@@ -85,6 +103,10 @@ internal static class CookieAuthSetup
 
                 options.Events.OnRedirectToAccessDenied = context =>
                 {
+                    // AUTENTICADO, mas sem a permissão. Aqui NÃO se redireciona para o login:
+                    // logar de novo não daria a permissão que falta, e o usuário ficaria num
+                    // laço entre a página e o formulário sem entender por quê. O 403 é a
+                    // resposta honesta.
                     context.Response.StatusCode = StatusCodes.Status403Forbidden;
 
                     return Task.CompletedTask;
@@ -95,4 +117,18 @@ internal static class CookieAuthSetup
 
         return services;
     }
+
+    /// <summary>
+    /// O request veio de um <b>navegador</b> pedindo uma página, ou de um cliente de API?
+    ///
+    /// <para>
+    /// Um navegador manda <c>Accept: text/html,...</c> ao navegar. Um <c>fetch</c> ou um cliente
+    /// HTTP manda <c>application/json</c> (ou nada). É a distinção certa porque descreve
+    /// <b>o que o chamador consegue consumir</b> — que é exatamente a pergunta que importa: um
+    /// redirect só faz sentido para quem sabe segui-lo e renderizar o resultado.
+    /// </para>
+    /// </summary>
+    private static bool WantsHtml(HttpRequest request) =>
+        request.Headers.Accept.Any(value =>
+            value?.Contains("text/html", StringComparison.OrdinalIgnoreCase) == true);
 }
