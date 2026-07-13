@@ -217,9 +217,21 @@ public sealed class DatabaseBootstrapper(
             await ExecuteAsync(connection, $"GRANT CONNECT ON DATABASE {Quote(database)} TO {user}", cancellationToken);
             await ExecuteAsync(connection, $"GRANT USAGE ON SCHEMA public TO {user}", cancellationToken);
 
-            // O Hangfire cria suas próprias tabelas em runtime, então lá o usuário precisa de DDL.
+            // O Hangfire cria as próprias tabelas em runtime, então lá o usuário precisa de DDL.
+            //
+            // ⚠️ São DOIS grants, e o de baixo é o que costuma faltar.
+            //
+            // O Hangfire.PostgreSql não usa o schema `public`: ele cria um schema PRÓPRIO,
+            // chamado `hangfire`. E `CREATE SCHEMA` é um privilégio do BANCO, não do schema —
+            // o `GRANT CREATE ON SCHEMA public` (que autoriza criar TABELAS dentro do public)
+            // não autoriza criar um SCHEMA novo.
+            //
+            // Sem o `GRANT CREATE ON DATABASE`, a API sobe, o Hangfire tenta se instalar e
+            // morre com:  42501: permission denied for database hangfire_{slug}
+            //             Where: SQL statement "CREATE SCHEMA ""hangfire"";"
             if (database == naming.HangfireDatabaseName)
             {
+                await ExecuteAsync(connection, $"GRANT CREATE ON DATABASE {Quote(database)} TO {user}", cancellationToken);
                 await ExecuteAsync(connection, $"GRANT CREATE ON SCHEMA public TO {user}", cancellationToken);
             }
 

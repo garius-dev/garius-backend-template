@@ -76,6 +76,52 @@ public class BootstrapTests(DatabaseFixture fixture) : IClassFixture<DatabaseFix
         exception.SqlState.ShouldBe(PostgresErrorCodes.InsufficientPrivilege);
     }
 
+    /// <summary>
+    /// O usuário de runtime precisa conseguir criar o schema <c>hangfire</c> — que é
+    /// EXATAMENTE o que o Hangfire faz no primeiro boot da API.
+    ///
+    /// <para>
+    /// <b>Este teste nasceu de um bug em produção.</b> O bootstrap dava
+    /// <c>GRANT CREATE ON SCHEMA public</c> no banco do Hangfire, o que autoriza criar TABELAS
+    /// dentro do <c>public</c> — mas o Hangfire.PostgreSql não usa o <c>public</c>: ele cria um
+    /// schema PRÓPRIO, chamado <c>hangfire</c>. E <c>CREATE SCHEMA</c> é privilégio do BANCO.
+    /// A API subia e morria com <c>42501: permission denied for database hangfire_{slug}</c>.
+    /// </para>
+    ///
+    /// <para>
+    /// A suíte não pegava porque a <c>ApiFactory</c> conecta como SUPERUSUÁRIO (o container
+    /// efêmero não tem o usuário de runtime) e cria o banco do Hangfire por fora. Ou seja: o
+    /// privilégio real do usuário real nunca era exercitado. Testar com superusuário é não
+    /// testar permissão nenhuma.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task O_usuario_de_runtime_CRIA_o_schema_do_Hangfire()
+    {
+        var (naming, bootstrapper) = Build();
+
+        await using var setup = CreateContext(naming.RootConnectionStringToAppDatabase);
+        await bootstrapper.RunAsync(setup, TestContext.Current.CancellationToken);
+
+        // Conecta no banco do HANGFIRE como o usuário de RUNTIME — não como superusuário.
+        var hangfire = new NpgsqlConnectionStringBuilder(naming.AppConnectionString)
+        {
+            Database = naming.HangfireDatabaseName,
+        }.ConnectionString;
+
+        await using var connection = new NpgsqlConnection(hangfire);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+        // O comando que o Hangfire.PostgreSql executa ao se instalar.
+        await using var createSchema = new NpgsqlCommand(@"CREATE SCHEMA ""hangfire""", connection);
+
+        var exception = await Record.ExceptionAsync(
+            () => createSchema.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+
+        exception.ShouldBeNull(
+            "sem CREATE no BANCO do Hangfire, a API sobe e morre no primeiro boot");
+    }
+
     [Fact]
     public async Task O_banco_fica_FECHADO_para_qualquer_outra_role_do_servidor()
     {
