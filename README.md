@@ -30,7 +30,7 @@ Template backend .NET 10 para APIs de produção. Foco em segurança e integraç
 
 ## Estado atual
 
-**Tudo o que está aqui está pronto e testado** — 166 testes contra Postgres e Redis reais (Testcontainers), build estrito (warnings = erro) e auditoria de CVE no build.
+**Tudo o que está aqui está pronto e testado** — 168 testes contra Postgres e Redis reais (Testcontainers), build estrito (warnings = erro) e auditoria de CVE no build.
 
 | Área | Estado |
 |---|---|
@@ -60,19 +60,31 @@ Não documente aqui o que ainda não existe. Documentação que mente é pior qu
 
 ## Derivando uma nova aplicação
 
-### 1. Renomeie a aplicação
+### 1. Derive com `dotnet new`
 
-**Obrigatório.** Em `src/Garius.Api/appsettings.json`:
-
-```json
-"Database": {
-  "ApplicationName": "MinhaApp.Backend"
-}
+```bash
+dotnet new install .
+dotnet new garius-api -n MinhaApp.Backend -o ../MinhaApp.Backend
 ```
+
+Isso renomeia **tudo o que precisa ser renomeado**, de uma vez:
+
+| | de | para |
+|---|---|---|
+| Projetos e pastas | `Garius.Api` | `MinhaApp.Api` |
+| Namespaces (~160 arquivos) | `Garius.Core` | `MinhaApp.Core` |
+| `InternalsVisibleTo` | `Garius.Tests` | `MinhaApp.Tests` |
+| Filtro de log do Serilog | `"Garius"` | `"MinhaApp"` |
+| `UserSecretsId` | (o do template) | um GUID novo |
+| **`Database:ApplicationName`** | `GariusTech.Backend.Template` | **`MinhaApp.Backend`** |
 
 Daí saem os nomes no Postgres: `db_minhaapp_backend`, `hangfire_minhaapp_backend`, `minhaapp_backend_user`.
 
-> **Se você esquecer disto, duas aplicações colidem no mesmo banco e no mesmo usuário.** O nome não vem do assembly de propósito: o assembly de entrada é `Garius.Api` em *toda* app derivada deste template.
+> ⚠️ **Não copie a pasta à mão, e não peça a uma IA para renomear.** Renomear ~160 arquivos é mecânico, e uma IA acerta ~99% — o problema é o 1%: um `InternalsVisibleTo` órfão, ou o `Database:ApplicationName` esquecido. Nada disso quebra o build. **O `ApplicationName` esquecido é o pior:** a aplicação compila, sobe e funciona — apontando para o **mesmo banco e o mesmo usuário** do template. A colisão só aparece quando duas aplicações se atropelam em produção.
+
+> Um teste (`TemplateDerivationTests`) **falha** se o `ApplicationName` ainda for o do template. É a rede de segurança para quem copiou a pasta assim mesmo — transforma o erro mais caro num erro de build.
+
+> O **"Exportar Template" do Visual Studio não serve**: ele renomeia o namespace raiz, mas não sabe nada sobre o seu `appsettings.json` — e te deixa exatamente no erro silencioso do banco.
 
 ### 2. Crie o secret no Google Secret Manager
 
@@ -159,16 +171,14 @@ Em `appsettings.Production.json`:
 ### 5. Rode
 
 ```bash
-# cria banco, roles, grants e aplica migrations
-MIGRATE_ONLY=true dotnet run --project src/Garius.Api
+# cria banco, roles, grants e aplica migrations — e MORRE (exit 0)
+MIGRATE_ONLY=true dotnet run --project src/MinhaApp.Api
 
 # sobe a API
-dotnet run --project src/Garius.Api
+dotnet run --project src/MinhaApp.Api
 ```
 
-### 6. Renomeie os projetos (opcional)
-
-`Garius.Api` / `Garius.Core` / `Garius.Infrastructure` podem virar `MinhaApp.*`. Se fizer isso, atualize os `InternalsVisibleTo` nos `.csproj` e o `MigrationsAssembly` em `PersistenceExtensions.cs`.
+Os projetos já se chamam `MinhaApp.*` — o `dotnet new` cuidou disso.
 
 ---
 

@@ -25,13 +25,26 @@ internal static class OpenApiSetup
 {
     private const string DocumentName = "v1";
 
-    internal static IServiceCollection AddApiDocumentation(this IServiceCollection services)
+    /// <summary>
+    /// O título vem de <c>Api:Title</c>, e não de uma constante no código: numa aplicação
+    /// derivada deste template, um título hardcoded ficaria dizendo "Garius Backend Template" na
+    /// documentação para sempre — e ninguém repara, porque a página funciona.
+    /// </summary>
+    private static string TitleOf(IConfiguration configuration) =>
+        configuration["Api:Title"] is { Length: > 0 } title ? title : "API";
+
+    internal static IServiceCollection AddApiDocumentation(
+        this IServiceCollection services,
+        IConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        var title = TitleOf(configuration);
 
         services.AddOpenApi(DocumentName, options =>
         {
-            options.AddDocumentTransformer<SecuritySchemesTransformer>();
+            options.AddDocumentTransformer(new SecuritySchemesTransformer(title));
         });
 
         return services;
@@ -46,8 +59,10 @@ internal static class OpenApiSetup
         app.MapOpenApi("/openapi/{documentName}.json")
            .RequirePermission(Core.Authorization.Permissions.Docs.Read);
 
+        var title = TitleOf(app.Configuration);
+
         app.MapScalarApiReference("/scalar", options => options
-            .WithTitle("Garius Backend Template")
+            .WithTitle(title)
             .WithTheme(ScalarTheme.BluePlanet)
             .AddDocument(DocumentName, routePattern: "/openapi/{documentName}.json"))
         .RequirePermission(Core.Authorization.Permissions.Docs.Read);
@@ -65,7 +80,7 @@ internal static class OpenApiSetup
 /// volta 401. É o tipo de defeito que passa despercebido porque a página <i>parece</i> certa.
 /// </para>
 /// </summary>
-internal sealed class SecuritySchemesTransformer : IOpenApiDocumentTransformer
+internal sealed class SecuritySchemesTransformer(string title) : IOpenApiDocumentTransformer
 {
     public Task TransformAsync(
         OpenApiDocument document,
@@ -140,7 +155,7 @@ internal sealed class SecuritySchemesTransformer : IOpenApiDocumentTransformer
 
         document.Info = new OpenApiInfo
         {
-            Title = "Garius Backend Template",
+            Title = title,
             Version = "v1",
             Description =
                 "Três formas de autenticar, um só modelo de autorizar: cookie (pessoa), " +

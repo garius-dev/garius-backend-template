@@ -122,7 +122,7 @@ builder.Services.AddProblemDetails();
 
 // OpenAPI + Scalar. O transformer declara os TRÊS esquemas de auth (cookie, Bearer,
 // X-Api-Key) — sem ele, nenhum endpoint protegido é testável pela própria página.
-builder.Services.AddApiDocumentation();
+builder.Services.AddApiDocumentation(builder.Configuration);
 
 var app = builder.Build();
 

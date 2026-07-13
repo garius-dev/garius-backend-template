@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Garius Tech",
+  "classifications": [ "Web", "API", "Backend", "Production" ],
+  "name": "Garius Backend Template (.NET 10)",
+  "description": "API de produção em .NET 10: segurança, LGPD, permissões granulares, M2M, rate limit, idempotência, outbox e documentação — tudo testado contra Postgres e Redis reais.",
+  "identity": "GariusTech.Backend.Template",
+  "shortName": "garius-api",
+  "sourceName": "GariusTech.Backend.Template",
+  "preferNameDirectory": true,
+  "defaultName": "MinhaApp.Backend",
+
+  "symbols": {
+    "shortName": {
+      "type": "generated",
+      "generator": "regex",
+      "dataType": "string",
+      "replaces": "Garius",
+      "fileRename": "Garius",
+      "parameters": {
+        "source": "name",
+        "steps": [
+          {
+            "regex": "^([^.]+).*$",
+            "replacement": "$1"
+          }
+        ]
+      }
+    },
+
+    "userSecretsId": {
+      "type": "generated",
+      "generator": "guid",
+      "replaces": "garius-backend-template",
+      "parameters": {
+        "defaultFormat": "D"
+      }
+    }
+  },
+
+  "guids": [],
+
+  "sources": [
+    {
+      "modifiers": [
+        {
+          "exclude": [
+            "**/bin/**",
+            "**/obj/**",
+            "**/.vs/**",
+            "**/.git/**",
+            "**/.template.config/**",
+            "**/TestResults/**",
+            "*.user",
+            "*.suo"
+          ]
+        }
+      ]
+    }
+  ],
+
+  "postActions": [
+    {
+      "actionId": "AC1156F7-BB77-4DB8-B28F-24EEBCCA1E5C",
+      "description": "Próximos passos",
+      "manualInstructions": [
+        {
+          "text": "1. LEIA o README.md e o CLAUDE.md. As decisões vêm com o porquê — se algo parecer redundante, provavelmente é uma armadilha já paga.\n2. Crie o secret no Google Secret Manager (README, 'Derivando uma nova aplicação', passo 2). A aplicação NÃO SOBE sem as chaves: é fail-fast deliberado.\n3. MIGRATE_ONLY=true dotnet run --project src/<SuaApp>.Api   (cria banco, roles, grants e migrations)\n4. dotnet run --project src/<SuaApp>.Api"
+        }
+      ],
+      "continueOnError": true
+    }
+  ]
+}
