@@ -1072,6 +1072,25 @@ docker compose -f docker-compose.app.yml up -d
 
 O compose **não sobe infraestrutura**: ele assume Traefik, Postgres, Redis e Loki já rodando na rede `garius_network` (externa). O único segredo que vive no servidor é o JSON da service account — é ele que destrava o Google Secret Manager, de onde vêm senha do banco, chaves de criptografia e a do JWT.
 
+### O que a aplicação COBRA para subir em produção
+
+Ela **falha fechada** em cada um destes: sem o valor, o container **não sobe**, e o log diz exatamente qual falta. Nenhum é opcional — e todos já vêm no `.env.example`:
+
+| Variável | O que é | Se faltar |
+|---|---|---|
+| `POSTGRES_HOST` / `POSTGRES_PORT` | onde está o Postgres | a app tenta `localhost` — que, *dentro* de um container, é ele mesmo |
+| `REDIS_HOST` | onde está o Redis | *"O Redis é obrigatório: autenticação e DataProtection dependem dele"* |
+| `TRAEFIK_NETWORK_CIDR` | a rede Docker do Traefik | *"Security:TrustedProxies está vazio em Production"* |
+| `CORS_ORIGIN` | de onde o front chama a API | *"Cors:AllowedOrigins está vazio em Production"* |
+
+> **São endereços, nunca senhas.** As senhas (banco, Redis, chaves de criptografia, JWT) vivem no **Secret Manager** e chegam pela service account. Nada disso encosta no `.env` nem no compose — que são versionados.
+
+O `TRAEFIK_NETWORK_CIDR` merece atenção: sem ele, o ASP.NET **ignora** o `X-Forwarded-For`, e todo request chega com o IP do Traefik. O rate limit passa a tratar **todos os usuários como um só**, o lockout e a auditoria mentem, e — pior — sem o `X-Forwarded-Proto` o cookie de sessão sai **sem a flag `Secure`**. Descubra o valor com:
+
+```bash
+docker network inspect garius_network --format '{{(index .IPAM.Config 0).Subnet}}'
+```
+
 > **`.env` e `secrets/` nunca vão para o git.** O `.gitignore` já bloqueia os dois. Essa regra existe porque no template **anterior** havia uma exceção (`!docker/**/secrets/gcp-service-account.json`) que vazou a chave para dentro do repositório.
 
 ### Topologia
