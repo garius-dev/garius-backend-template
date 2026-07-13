@@ -35,12 +35,6 @@ services:
       - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT}
       - MIGRATE_ONLY=true
       - GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/gcp_service_account
-
-      # ONDE está o Postgres. As SENHAS não vêm daqui — vêm do Secret Manager. Isto é só o
-      # endereço, e ele é o nome do container na garius_network (não "localhost": dentro de
-      # um container, localhost é o PRÓPRIO container).
-      - Database__Host=${POSTGRES_HOST}
-      - Database__Port=${POSTGRES_PORT}
     secrets:
       - gcp_service_account
     networks:
@@ -55,32 +49,10 @@ services:
         condition: service_completed_successfully
     environment:
       - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT}
-
       # Onde a app acha a service account, que por sua vez destrava o Google
       # Secret Manager (senhas do banco, chaves de criptografia, JWT). Sem isto a
       # app NÃO SOBE — é fail-fast deliberado, não um bug.
       - GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/gcp_service_account
-
-      # ── As quatro coisas que a aplicação COBRA em produção. ────────────────
-      # Ela FALHA FECHADA em cada uma: sem elas o container não sobe, e a mensagem
-      # de erro diz exatamente qual falta. Não são opcionais.
-
-      # ONDE estão Postgres e Redis. As SENHAS vêm do Secret Manager — isto é só o
-      # endereço. E é o NOME DO CONTAINER, não "localhost": dentro de um container,
-      # localhost é o próprio container.
-      - Database__Host=${POSTGRES_HOST}
-      - Database__Port=${POSTGRES_PORT}
-      - Redis__ConnectionString=${REDIS_HOST}:6379
-
-      # A rede Docker do Traefik. Sem ela o ASP.NET IGNORA o X-Forwarded-For, e todo
-      # request aparece com o IP do proxy — o que quebra o rate limit (todos os
-      # usuários viram um só), o lockout e a auditoria. Pior: sem o X-Forwarded-Proto
-      # o cookie sai SEM a flag Secure.
-      - Security__TrustedProxies__0=${TRAEFIK_NETWORK_CIDR}
-
-      # De onde o frontend pode chamar a API. O default é [] (nega TUDO) — de
-      # propósito: uma configuração esquecida não pode virar uma API aberta.
-      - Cors__AllowedOrigins__0=${CORS_ORIGIN}
     secrets:
       - gcp_service_account
     healthcheck:
