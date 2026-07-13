@@ -95,7 +95,7 @@ builder.ConfigureKestrelLimits();
 
 builder.Services.AddConfiguredForwardedHeaders(builder.Configuration, builder.Environment);
 builder.Services.AddConfiguredCors(builder.Configuration, builder.Environment);
-builder.Services.AddConfiguredHealthChecks(builder.Configuration, naming);
+builder.Services.AddConfiguredHealthChecks(naming);
 
 // Redis: dependência OBRIGATÓRIA (refresh tokens + DataProtection, que cifra o cookie).
 // Também registra o DataProtection com o keyring NO REDIS — sem isso, duas réplicas não

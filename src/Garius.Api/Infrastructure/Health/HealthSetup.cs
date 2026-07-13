@@ -4,6 +4,7 @@ using System.Text.Json;
 using Garius.Infrastructure.Database;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using StackExchange.Redis;
 
 namespace Garius.Api.Infrastructure.Health;
 
@@ -29,7 +30,6 @@ internal static class HealthSetup
 
     internal static IServiceCollection AddConfiguredHealthChecks(
         this IServiceCollection services,
-        IConfiguration configuration,
         DatabaseNaming naming)
     {
         ArgumentNullException.ThrowIfNull(naming);
@@ -43,12 +43,24 @@ internal static class HealthSetup
         // O health check do Postgres NUNCA funcionou, e ninguém percebeu.
         builder.AddNpgSql(naming.AppConnectionString, name: "postgres", tags: [ReadyTag]);
 
-        var redis = configuration["Redis:ConnectionString"];
-
-        if (!string.IsNullOrWhiteSpace(redis))
-        {
-            builder.AddRedis(redis, name: "redis", tags: [ReadyTag]);
-        }
+        // O MESMO multiplexer que a aplicação usa — resolvido do DI, não uma conexão nova.
+        //
+        // ⚠️ NÃO monte a conexão a partir de `Redis:ConnectionString` aqui. Essa string NÃO tem
+        // a senha (ela vem separada, em `Redis:Password`, porque é segredo e vive no Secret
+        // Manager). Um health check que a use crua nunca autentica: o Redis responde
+        // "NOAUTH Authentication required", o /health/ready fica Unhealthy PARA SEMPRE — e a
+        // aplicação, que monta a conexão certa (ver RedisExtensions.AddRedis), funciona
+        // perfeitamente. O sintoma é um container saudável que o orquestrador mata em loop.
+        //
+        // É EXATAMENTE o bug que o comentário do Postgres, logo acima, descreve: duas fórmulas
+        // divergentes para a mesma conexão. Aqui ele aconteceu de novo, no Redis.
+        //
+        // A factory adia a resolução para depois do Build() — o AddRedis (que registra o
+        // multiplexer) roda DEPOIS deste método, então em tempo de registro ele ainda não existe.
+        builder.AddRedis(
+            sp => sp.GetRequiredService<IConnectionMultiplexer>(),
+            name: "redis",
+            tags: [ReadyTag]);
 
         return services;
     }
