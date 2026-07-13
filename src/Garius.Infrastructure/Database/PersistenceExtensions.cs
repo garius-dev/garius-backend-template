@@ -4,7 +4,9 @@ using Garius.Infrastructure.Database.Interceptors;
 using Garius.Infrastructure.Identity;
 using Garius.Infrastructure.Tenancy;
 using Microsoft.EntityFrameworkCore;
+using Garius.Infrastructure.Configuration;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -53,11 +55,13 @@ public static class PersistenceExtensions
     public static DatabaseNaming AddPersistence(
         this IServiceCollection services,
         IConfiguration configuration,
+        IHostEnvironment environment,
         Assembly applicationAssembly,
         bool migrateOnly)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(environment);
 
         services.Configure<TenancyOptions>(configuration.GetSection(TenancyOptions.SectionName));
 
@@ -68,6 +72,12 @@ public static class PersistenceExtensions
 
         var options = new DatabaseOptions();
         configuration.GetSection(DatabaseOptions.SectionName).Bind(options);
+
+        // O secret guarda o host de PRODUÇÃO (o nome do container). Rodando na máquina, fora do
+        // Docker, ele vira `localhost` — é o que permite UM secret só, sem duas cópias para manter
+        // em sincronia. Ver DockerAwareHost.
+        options.Host = DockerAwareHost.Resolve(options.Host, configuration, environment);
+
         services.AddSingleton(options);
 
         var naming = new DatabaseNaming(options, applicationAssembly);

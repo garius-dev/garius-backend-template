@@ -8,6 +8,7 @@ using Garius.Tests.Infrastructure;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting.Internal;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Shouldly;
@@ -195,7 +196,10 @@ public class BootstrapAdminTests(DatabaseFixture fixture) : IClassFixture<Databa
             services.AddFieldEncryption(configuration);
 
             // migrateOnly: true — o MESMO caminho do container de migrations.
-            services.AddPersistence(configuration, migrationsAssembly, migrateOnly: true);
+            services.AddPersistence(
+            configuration,
+            new HostingEnvironment { EnvironmentName = "Production" },
+            migrationsAssembly, migrateOnly: true);
 
             _provider = services.BuildServiceProvider();
             _scope = _provider.CreateScope();
