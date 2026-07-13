@@ -8,10 +8,10 @@
   "shortName": "garius-api",
   "sourceName": "GariusTech.Backend.Template",
   "preferNameDirectory": true,
-  "defaultName": "MinhaApp.Backend",
+  "defaultName": "MinhaApp.Api",
 
   "symbols": {
-    "shortName": {
+    "projectPrefix": {
       "type": "generated",
       "generator": "regex",
       "dataType": "string",
@@ -21,8 +21,8 @@
         "source": "name",
         "steps": [
           {
-            "regex": "^([^.]+).*$",
-            "replacement": "$1"
+            "regex": "\\.[^.]+$",
+            "replacement": ""
           }
         ]
       }

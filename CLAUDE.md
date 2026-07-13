@@ -76,12 +76,13 @@ Para derivar, use o `dotnet new` (não copie a pasta à mão, e não peça para 
 
 ```bash
 dotnet new install .
-dotnet new garius-api -n MinhaApp.Backend -o ../MinhaApp.Backend
+dotnet new garius-api -n Tcm.SfcHortolandia.Api -o ../Tcm.SfcHortolandia.Api
 ```
 
-Isso renomeia os projetos, os namespaces, o `InternalsVisibleTo`, o `MigrationsAssembly` **e** o
-`Database:ApplicationName` — que é o que impede duas aplicações de colidirem no mesmo banco e no
-mesmo usuário do Postgres.
+**O nome que você passa é o namespace raiz.** Os projetos viram `Tcm.SfcHortolandia.Api`, `.Core`,
+`.Infrastructure` e `.Tests`. Isso renomeia também o `InternalsVisibleTo`, o filtro de log do
+Serilog, o `UserSecretsId` **e** o `Database:ApplicationName` — que é o que impede duas aplicações
+de colidirem no mesmo banco e no mesmo usuário do Postgres.
 
 > Há um teste (`TemplateDerivationTests`) que **falha** se o `ApplicationName` ainda for o do
 > template. Ele existe porque essa colisão é silenciosa: a app sobe, funciona, e só atropela a

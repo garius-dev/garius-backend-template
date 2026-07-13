@@ -64,21 +64,34 @@ Não documente aqui o que ainda não existe. Documentação que mente é pior qu
 
 ```bash
 dotnet new install .
-dotnet new garius-api -n MinhaApp.Backend -o ../MinhaApp.Backend
+dotnet new garius-api -n Tcm.SfcHortolandia.Api -o ../Tcm.SfcHortolandia.Api
 ```
 
-Isso renomeia **tudo o que precisa ser renomeado**, de uma vez:
+**O nome que você passa é o namespace raiz da aplicação.** Os projetos são os sufixos dele:
 
-| | de | para |
-|---|---|---|
-| Projetos e pastas | `Garius.Api` | `MinhaApp.Api` |
-| Namespaces (~160 arquivos) | `Garius.Core` | `MinhaApp.Core` |
-| `InternalsVisibleTo` | `Garius.Tests` | `MinhaApp.Tests` |
-| Filtro de log do Serilog | `"Garius"` | `"MinhaApp"` |
-| `UserSecretsId` | (o do template) | um GUID novo |
-| **`Database:ApplicationName`** | `GariusTech.Backend.Template` | **`MinhaApp.Backend`** |
+```
+src/Tcm.SfcHortolandia.Api/              namespace Tcm.SfcHortolandia.Api.Features.Auth
+src/Tcm.SfcHortolandia.Core/             namespace Tcm.SfcHortolandia.Core.Entities
+src/Tcm.SfcHortolandia.Infrastructure/   namespace Tcm.SfcHortolandia.Infrastructure.Database
+tests/Tcm.SfcHortolandia.Tests/          namespace Tcm.SfcHortolandia.Tests.Auth
+```
 
-Daí saem os nomes no Postgres: `db_minhaapp_backend`, `hangfire_minhaapp_backend`, `minhaapp_backend_user`.
+> O prefixo comum é o nome **menos o último segmento** (`Tcm.SfcHortolandia.Api` → `Tcm.SfcHortolandia`). Um nome sem ponto funciona igual: `-n MeuSistema` gera `MeuSistema.Api`, `MeuSistema.Core`…
+
+E renomeia **tudo o que precisa ser renomeado**, de uma vez:
+
+| | vira |
+|---|---|
+| Projetos, pastas e ~160 namespaces | `Tcm.SfcHortolandia.*` |
+| `InternalsVisibleTo` | `Tcm.SfcHortolandia.Tests` |
+| Filtro de log do Serilog | `"Tcm.SfcHortolandia"` |
+| `Api:Title` (Scalar/OpenAPI) | `Tcm.SfcHortolandia.Api` |
+| `UserSecretsId` | um GUID novo |
+| **`Database:ApplicationName`** | **`Tcm.SfcHortolandia.Api`** |
+
+Daí saem os nomes no Postgres: `db_tcm_sfchortolandia_api`, `hangfire_tcm_sfchortolandia_api`, `tcm_sfchortolandia_api_user`.
+
+> Verificado: a app derivada compila com **0 warnings** e passa os **168 testes**.
 
 > ⚠️ **Não copie a pasta à mão, e não peça a uma IA para renomear.** Renomear ~160 arquivos é mecânico, e uma IA acerta ~99% — o problema é o 1%: um `InternalsVisibleTo` órfão, ou o `Database:ApplicationName` esquecido. Nada disso quebra o build. **O `ApplicationName` esquecido é o pior:** a aplicação compila, sobe e funciona — apontando para o **mesmo banco e o mesmo usuário** do template. A colisão só aparece quando duas aplicações se atropelam em produção.
 
@@ -172,13 +185,13 @@ Em `appsettings.Production.json`:
 
 ```bash
 # cria banco, roles, grants e aplica migrations — e MORRE (exit 0)
-MIGRATE_ONLY=true dotnet run --project src/MinhaApp.Api
+MIGRATE_ONLY=true dotnet run --project src/Tcm.SfcHortolandia.Api
 
 # sobe a API
-dotnet run --project src/MinhaApp.Api
+dotnet run --project src/Tcm.SfcHortolandia.Api
 ```
 
-Os projetos já se chamam `MinhaApp.*` — o `dotnet new` cuidou disso.
+Os projetos já se chamam `Tcm.SfcHortolandia.*` — o `dotnet new` cuidou disso.
 
 ---
 
