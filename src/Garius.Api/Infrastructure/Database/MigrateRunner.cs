@@ -1,4 +1,5 @@
 using Garius.Infrastructure.Database;
+using Garius.Infrastructure.Identity;
 using Serilog;
 
 namespace Garius.Api.Infrastructure.Database;
@@ -37,6 +38,15 @@ internal static class MigrateRunner
             var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
             await bootstrapper.RunAsync(dbContext);
+
+            // O primeiro usuário — depois do banco existir e das migrations rodarem, porque ele
+            // é uma LINHA em tabelas que as migrations acabaram de criar.
+            //
+            // Aqui, e não no runtime: o container de migrations é ÚNICO, e N réplicas da API
+            // semeando o mesmo usuário ao mesmo tempo é uma corrida.
+            var adminSeeder = scope.ServiceProvider.GetRequiredService<BootstrapAdminSeeder>();
+
+            await adminSeeder.SeedAsync();
 
             Log.Information("Bootstrap concluído com sucesso. Encerrando.");
 

@@ -116,9 +116,20 @@ O `dotnet new` já apontou a sua app para o secret **dela** (`tcm-sfchortolandia
   "Encryption:ActiveKeyVersion": "1",
   "Encryption:BlindIndexKey": "<32 bytes em base64>",
 
-  "Jwt:SigningKey": "<32 bytes em base64>"
+  "Jwt:SigningKey": "<32 bytes em base64>",
+
+  "Bootstrap:AdminEmail": "voce@empresa.com",
+  "Bootstrap:AdminPassword": "<uma senha forte, mínimo 12 caracteres>"
 }
 ```
+
+> **`Bootstrap:*` é o que resolve o ovo e a galinha.** Sem elas, a aplicação sobe **fechada** — a `FallbackPolicy` exige autenticação em tudo, o `/scalar` exige `docs.read`, o `/jobs` exige `jobs.read` — e não existe **nenhum usuário** para conceder permissão a ninguém. Nem para entrar e criar o primeiro.
+>
+> Com elas, o bootstrap cria esse usuário com a permissão **curinga** (`*`), que abre tudo — inclusive as permissões que você criar depois.
+>
+> **Não há senha padrão, e isso é deliberado.** Um `admin/admin` embutido é como um deploy vaza: alguém deriva, sobe, esquece de trocar, e uma conta com poder total fica aberta na internet — num template que *parece* seguro. Se as duas chaves não estiverem no secret, **nenhum usuário é criado** (e o bootstrap avisa no log). A ausência de configuração falha **fechada**.
+>
+> O seed é **idempotente e sem efeito colateral**: se o usuário já existe, o bootstrap **não toca nele** — não redefine a senha nem reconcede a permissão. Se fizesse, seria uma porta dos fundos que reabre a cada deploy: você revoga um acesso, faz um deploy qualquer, e o acesso volta em silêncio.
 
 Gere as chaves com:
 

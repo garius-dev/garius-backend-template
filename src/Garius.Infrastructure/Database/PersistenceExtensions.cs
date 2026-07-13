@@ -61,6 +61,11 @@ public static class PersistenceExtensions
 
         services.Configure<TenancyOptions>(configuration.GetSection(TenancyOptions.SectionName));
 
+        // O primeiro usuário (superadministrador). As duas chaves vêm do Secret Manager; se não
+        // estiverem lá, NENHUM usuário é criado — ver BootstrapAdminSeeder.
+        services.Configure<BootstrapAdminOptions>(
+            configuration.GetSection(BootstrapAdminOptions.SectionName));
+
         var options = new DatabaseOptions();
         configuration.GetSection(DatabaseOptions.SectionName).Bind(options);
         services.AddSingleton(options);
@@ -90,14 +95,20 @@ public static class PersistenceExtensions
             builder.EnableDetailedErrors(migrateOnly);
         });
 
+        // O Identity vale nos DOIS modos, e por motivos diferentes:
+        //
+        //   runtime   -> autentica gente (UserManager, o normalizador de índice cego, etc.);
+        //   bootstrap -> CRIA o primeiro usuário (o superadministrador). Isso exige o
+        //                UserManager: é ele que faz o hash da senha e, via
+        //                BlindIndexLookupNormalizer, grava o índice cego do e-mail. Montar o
+        //                usuário à mão no DbContext gravaria uma senha sem hash e um
+        //                NormalizedEmail nulo — e o login nunca funcionaria.
+        services.AddApplicationIdentity(forBootstrap: migrateOnly);
+
         if (migrateOnly)
         {
             services.AddScoped<DatabaseBootstrapper>();
-        }
-        else
-        {
-            // O Identity só faz sentido no runtime; o bootstrap não autentica ninguém.
-            services.AddApplicationIdentity();
+            services.AddScoped<BootstrapAdminSeeder>();
         }
 
         return naming;

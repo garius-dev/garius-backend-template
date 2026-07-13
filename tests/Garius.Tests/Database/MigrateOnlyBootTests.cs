@@ -125,6 +125,9 @@ public class MigrateOnlyBootTests
 
         services.AddFieldEncryption(configuration);
 
+        // AddPersistence é quem registra o Identity (para o BootstrapAdminSeeder criar o
+        // primeiro usuário) e o DatabaseBootstrapper. É ele que precisa validar SOZINHO — sem
+        // Redis, sem DataProtection, sem a pilha de autorização, nada disso existe no bootstrap.
         services.AddPersistence(
             configuration,
             Assembly.GetAssembly(typeof(Program))!,

@@ -17,7 +17,30 @@ public static class IdentityExtensions
     /// <c>CheckPasswordAsync</c>) funciona <b>sem nenhuma outra adaptação</b>.
     /// </para>
     /// </summary>
-    public static IServiceCollection AddApplicationIdentity(this IServiceCollection services)
+    /// <param name="services">O contêiner.</param>
+    /// <param name="forBootstrap">
+    /// <c>true</c> no modo <c>MIGRATE_ONLY</c>. O bootstrap precisa do <c>UserManager</c> — é
+    /// ele que faz o hash da senha e grava o índice cego do e-mail ao criar o primeiro
+    /// administrador —, mas <b>não</b> das peças que dependem de infraestrutura que ali não
+    /// existe:
+    ///
+    /// <list type="bullet">
+    ///   <item><c>AddDefaultTokenProviders()</c> exige o <c>IDataProtectionProvider</c>, que é
+    ///         registrado no <c>AddRedis</c> (só no runtime). Serve para tokens de reset de
+    ///         senha e confirmação de e-mail — que o bootstrap não emite.</item>
+    ///   <item><c>RedisRefreshTokenStore</c> exige o <c>IConnectionMultiplexer</c>, idem. O
+    ///         bootstrap não autentica ninguém, logo não emite refresh token.</item>
+    /// </list>
+    ///
+    /// <para>
+    /// Registrá-las no bootstrap faz o <c>builder.Build()</c> estourar na validação do
+    /// container — e o <c>MIGRATE_ONLY</c> volta a não rodar. É o mesmo tipo de armadilha do
+    /// <c>ICurrentUser</c>, e o <c>MigrateOnlyBootTests</c> a pega.
+    /// </para>
+    /// </param>
+    public static IServiceCollection AddApplicationIdentity(
+        this IServiceCollection services,
+        bool forBootstrap = false)
     {
         ArgumentNullException.ThrowIfNull(services);
 
@@ -25,7 +48,7 @@ public static class IdentityExtensions
         // AddRedis, com o keyring NO REDIS — sem isso, duas réplicas não conseguem ler o
         // cookie uma da outra.
 
-        services.AddIdentityCore<ApplicationUser>(options =>
+        var identity = services.AddIdentityCore<ApplicationUser>(options =>
         {
             // Senha: o comprimento faz muito mais pela entropia do que a exigência de
             // símbolos, que só produz "Senha@123" — previsível e fácil de quebrar.
@@ -51,8 +74,14 @@ public static class IdentityExtensions
             options.SignIn.RequireConfirmedAccount = false;
         })
         .AddRoles<ApplicationRole>()
-        .AddEntityFrameworkStores<AppDbContext>()
-        .AddDefaultTokenProviders();
+        .AddEntityFrameworkStores<AppDbContext>();
+
+        // Tokens de reset de senha / confirmação de e-mail. Dependem do DataProtection, que só
+        // existe no runtime (o keyring vive no Redis). O bootstrap não emite token nenhum.
+        if (!forBootstrap)
+        {
+            identity.AddDefaultTokenProviders();
+        }
 
         // A peça-chave: NormalizedEmail passa a guardar o HMAC do e-mail, não o e-mail.
         // Registrado DEPOIS do AddIdentityCore para substituir o normalizador padrão.
@@ -70,7 +99,11 @@ public static class IdentityExtensions
         services.AddScoped<IUserClaimsPrincipalFactory<ApplicationUser>, LeanClaimsPrincipalFactory>();
 
         // Refresh tokens no Redis: efêmeros (TTL nativo), não poluem o banco.
-        services.AddSingleton<IRefreshTokenStore, RedisRefreshTokenStore>();
+        // O bootstrap não autentica ninguém — e o Redis nem é registrado lá.
+        if (!forBootstrap)
+        {
+            services.AddSingleton<IRefreshTokenStore, RedisRefreshTokenStore>();
+        }
 
         return services;
     }
