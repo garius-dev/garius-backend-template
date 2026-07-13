@@ -134,13 +134,38 @@ O `dotnet new` já apontou a sua app para o secret **dela** (`tcm-sfchortolandia
 >
 > `Database:Host` e `Redis:ConnectionString` são o **nome do container** na rede Docker — nunca `localhost`: dentro de um container, `localhost` é o *próprio* container.
 >
-> `Security:TrustedProxies` é a rede do Traefik, e é o mais traiçoeiro dos quatro: sem ele o ASP.NET **ignora** o `X-Forwarded-For`, e todo request chega com o IP do proxy. O rate limit passa a tratar **todos os usuários como um só**, o lockout e a auditoria mentem, e — pior — sem o `X-Forwarded-Proto` o cookie de sessão sai **sem a flag `Secure`**. Descubra o valor com:
->
-> ```bash
-> docker network inspect garius_network --format '{{(index .IPAM.Config 0).Subnet}}'
-> ```
->
-> A aplicação **não sobe** sem nenhum dos quatro — falha fechada, e o log diz qual falta. É o mesmo princípio de todo o resto: configuração ausente derruba o boot, nunca "degrada".
+A aplicação **não sobe** sem nenhum dos quatro — falha fechada, e o log diz qual falta. É o mesmo princípio de todo o resto: configuração ausente derruba o boot, nunca "degrada".
+
+#### `Security:TrustedProxies` — o que é, e por que não pode ficar vazio
+
+**Pegue o valor assim** (uma vez por servidor — é o mesmo para todas as suas apps):
+
+```bash
+docker network inspect garius_network --format '{{(index .IPAM.Config 0).Subnet}}'
+# → 172.18.0.0/16
+```
+
+É a **rede Docker do Traefik** — o endereço de quem entrega o request no seu container. **Não** é da Cloudflare (essa é outra camada; veja abaixo).
+
+**O problema que ele resolve.** O `X-Forwarded-For` é só um *header HTTP*: quem faz a requisição escreve o que quiser nele.
+
+```bash
+curl https://api.suaapp.com/auth/login -H "X-Forwarded-For: 1.2.3.4" -d '...'
+```
+
+Se a aplicação aceita esse header de **qualquer origem**, ela acredita que o request veio de `1.2.3.4` — porque o atacante disse que veio. E o template usa o IP para três coisas que então **deixam de funcionar**:
+
+| Usa o IP para | O que quebra se o header for falsificável |
+|---|---|
+| **Rate limit por IP** | o atacante manda um IP diferente a cada tentativa e o limite **nunca dispara** — o brute force de senha passa livre |
+| **Auditoria LGPD** | o log de acesso a dado pessoal registra o IP que o atacante escolheu |
+| **Lockout / anomalia** | idem: cada tentativa parece vir de alguém novo |
+
+**O que a lista faz.** Ela diz: *"só aceite o `X-Forwarded-For` se o request chegou **deste** endereço"*. Como o único que fala com o container é o Traefik (pela rede Docker), a lista é a rede do Traefik. Um request que chegue de outro lugar tem o header **ignorado**, e vale o IP real da conexão TCP.
+
+> ⚠️ **Não "resolva" isso deixando a lista vazia.** No ASP.NET, `KnownProxies` e `KnownNetworks` vazios significam **confiar em qualquer um** — e é por isso que a aplicação **se recusa a subir** nesse estado, em vez de aceitar em silêncio. Um rate limit que não limita é pior que nenhum: ele passa a impressão de que existe uma defesa.
+
+**E a Cloudflare?** É a camada de **fora** (internet → Traefik), e tem configuração própria — `Security:TrustCloudflareIps`, que já vem `true`. Ali o template usa o `CF-Connecting-IP`, validado contra os ranges publicados pela Cloudflare. O `TrustedProxies` cuida do salto **de dentro** (Traefik → container). São dois saltos, duas configurações.
 
 > **`Bootstrap:*` é o que resolve o ovo e a galinha.** Sem elas, a aplicação sobe **fechada** — a `FallbackPolicy` exige autenticação em tudo, o `/scalar` exige `docs.read`, o `/jobs` exige `jobs.read` — e não existe **nenhum usuário** para conceder permissão a ninguém. Nem para entrar e criar o primeiro.
 >

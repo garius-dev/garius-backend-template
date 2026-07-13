@@ -40,10 +40,33 @@ internal static class ForwardedHeadersSetup
             // headers do proxy em silêncio — quebrando rate limit, lockout e auditoria,
             // e derrubando a flag Secure dos cookies. Melhor não subir do que subir mentindo.
             throw new InvalidOperationException(
-                "Security:TrustedProxies está vazio em Production. Sem isso, o ASP.NET ignora " +
-                "X-Forwarded-For e X-Forwarded-Proto: todo request apareceria com o IP do Traefik " +
-                "(quebrando rate limit, lockout e auditoria) e os cookies sairiam sem a flag Secure. " +
-                "Declare a rede Docker do Traefik (ex.: \"172.18.0.0/16\").");
+                "Security:TrustedProxies está vazio em Production.\n\n" +
+
+                "É a rede Docker do TRAEFIK (não a da Cloudflare — essa é outra camada, e já vem " +
+                "ligada em Security:TrustCloudflareIps).\n\n" +
+
+                "Pegue o valor no servidor:\n" +
+                "    docker network inspect garius_network --format '{{(index .IPAM.Config 0).Subnet}}'\n" +
+                "    -> 172.18.0.0/16\n\n" +
+
+                "e grave no Secret Manager:\n" +
+                "    \"Security:TrustedProxies:0\": \"172.18.0.0/16\"\n\n" +
+
+                "POR QUE isto é obrigatório: o X-Forwarded-For é só um HEADER — quem faz a " +
+                "requisição escreve o que quiser nele. Sem a lista, o ASP.NET aceita esse header de " +
+                "QUALQUER origem, e o IP do cliente passa a ser o que o atacante mandar. O rate " +
+                "limit deixa de limitar (basta variar o IP a cada tentativa e o brute force de senha " +
+                "passa livre), a auditoria de LGPD registra o IP que ele escolheu, e o lockout não " +
+                "vê padrão nenhum.\n\n" +
+
+                "Com a lista, o header só é aceito quando o request chega DA rede do Traefik — que é " +
+                "o único que fala com este container. De qualquer outro lugar ele é ignorado, e vale " +
+                "o IP real da conexão.\n\n" +
+
+                "NÃO 'resolva' deixando a lista vazia: no ASP.NET, KnownProxies/KnownNetworks vazios " +
+                "significam CONFIAR EM QUALQUER UM. É por isso que a aplicação se recusa a subir " +
+                "assim, em vez de aceitar em silêncio — um rate limit que não limita é pior que " +
+                "nenhum, porque passa a impressão de que existe uma defesa.");
         }
 
         services.Configure<ForwardedHeadersOptions>(options =>
