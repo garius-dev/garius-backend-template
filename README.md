@@ -30,7 +30,7 @@ Template backend .NET 10 para APIs de produção. Foco em segurança e integraç
 
 ## Estado atual
 
-**Tudo o que está aqui está pronto e testado** — 168 testes contra Postgres e Redis reais (Testcontainers), build estrito (warnings = erro) e auditoria de CVE no build.
+**Tudo o que está aqui está pronto e testado** — 169 testes contra Postgres e Redis reais (Testcontainers), build estrito (warnings = erro) e auditoria de CVE no build.
 
 | Área | Estado |
 |---|---|
@@ -88,20 +88,23 @@ E renomeia **tudo o que precisa ser renomeado**, de uma vez:
 | `Api:Title` (Scalar/OpenAPI) | `Tcm.SfcHortolandia.Api` |
 | `UserSecretsId` | um GUID novo |
 | **`Database:ApplicationName`** | **`Tcm.SfcHortolandia.Api`** |
+| **`GcpSecrets:SecretName`** | **`tcm-sfchortolandia-api-secrets`** |
 
 Daí saem os nomes no Postgres: `db_tcm_sfchortolandia_api`, `hangfire_tcm_sfchortolandia_api`, `tcm_sfchortolandia_api_user`.
 
-> Verificado: a app derivada compila com **0 warnings** e passa os **168 testes**.
+> Verificado: a app derivada compila com **0 warnings** e a suíte nasce **verde** (167 passando; os 2 testes que leem o Secret Manager ficam *pulados* até você criar o secret — ver o passo 2).
 
 > ⚠️ **Não copie a pasta à mão, e não peça a uma IA para renomear.** Renomear ~160 arquivos é mecânico, e uma IA acerta ~99% — o problema é o 1%: um `InternalsVisibleTo` órfão, ou o `Database:ApplicationName` esquecido. Nada disso quebra o build. **O `ApplicationName` esquecido é o pior:** a aplicação compila, sobe e funciona — apontando para o **mesmo banco e o mesmo usuário** do template. A colisão só aparece quando duas aplicações se atropelam em produção.
 
-> Um teste (`TemplateDerivationTests`) **falha** se o `ApplicationName` ainda for o do template. É a rede de segurança para quem copiou a pasta assim mesmo — transforma o erro mais caro num erro de build.
+> Dois testes (`TemplateDerivationTests`) **falham** se o `Database:ApplicationName` ou o `GcpSecrets:SecretName` ainda forem os do template. São a rede de segurança para quem copiou a pasta assim mesmo — transformam os dois erros mais caros em erro de build.
+
+> ⚠️ **O `SecretName` esquecido é ainda pior que o `ApplicationName`.** A colisão de banco ao menos **quebra** visivelmente quando duas apps se atropelam. Já duas aplicações lendo o **mesmo secret** cifram dados pessoais com a **mesma chave**, e **nada nunca falha**: a rotação de uma quebra a outra, e quem tiver acesso ao secret de uma decifra a PII de todas.
 
 > O **"Exportar Template" do Visual Studio não serve**: ele renomeia o namespace raiz, mas não sabe nada sobre o seu `appsettings.json` — e te deixa exatamente no erro silencioso do banco.
 
 ### 2. Crie o secret no Google Secret Manager
 
-Um secret por aplicação, com um **JSON flat** (chaves no formato `Section:Key`):
+O `dotnet new` já apontou a sua app para o secret **dela** (`tcm-sfchortolandia-api-secrets`) — falta criá-lo. Um secret por aplicação, com um **JSON flat** (chaves no formato `Section:Key`):
 
 ```json
 {

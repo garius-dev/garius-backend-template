@@ -65,6 +65,18 @@ public class TemplateDerivationTests
     private const string Marker = "Gari" + "us";
 
     /// <summary>
+    /// O <c>GcpSecrets:SecretName</c> que vem no template.
+    ///
+    /// <para>
+    /// Quebrado pela mesma razão que <see cref="Marker"/> — o <c>dotnet new</c> substitui esta
+    /// string <b>inteira</b> pelo secret derivado, inclusive aqui dentro. Escrita por extenso, o
+    /// guarda passaria a comparar o valor com ele mesmo e nunca falharia.
+    /// </para>
+    /// </summary>
+    private static string TemplateSecretName =>
+        $"{Marker.ToLowerInvariant()}tech-backend-template-secrets";
+
+    /// <summary>
     /// ⚠️ <b>Este teste é ignorado NO PRÓPRIO TEMPLATE, e falha em qualquer app derivada que não
     /// tenha trocado o nome.</b>
     ///
@@ -111,6 +123,58 @@ public class TemplateDerivationTests
     }
 
     /// <summary>
+    /// O <b>segundo</b> valor que uma aplicação derivada precisa trocar — e o mais perigoso dos
+    /// dois, porque o erro dele <b>não colide, ele VAZA</b>.
+    ///
+    /// <para>
+    /// O <c>GcpSecrets:SecretName</c> diz de qual secret do Google Secret Manager a aplicação lê
+    /// suas chaves. Deixado com o valor do template, a app derivada lê as <b>chaves de criptografia
+    /// do template</b> — e funciona, sem reclamar de nada. Duas aplicações passariam a cifrar dados
+    /// pessoais com a <b>mesma chave</b>, e a rotação de uma quebraria a outra. Pior: quem tiver
+    /// acesso ao secret de uma aplicação consegue decifrar a PII de <b>todas</b> as que o
+    /// compartilham.
+    /// </para>
+    ///
+    /// <para>
+    /// Ao contrário da colisão de banco (que ao menos <b>quebra</b> visivelmente quando duas apps
+    /// se atropelam), este erro é <b>completamente silencioso</b>. Nada nunca falha.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Uma_aplicacao_DERIVADA_precisa_trocar_o_GcpSecrets_SecretName()
+    {
+        var assemblyName = typeof(TemplateDerivationTests).Assembly.GetName().Name!;
+
+        Assert.SkipWhen(
+            assemblyName.StartsWith(TemplateAssemblyPrefix, StringComparison.Ordinal),
+            "Este é o próprio template. O teste vale para as aplicações derivadas dele.");
+
+        var secretName = ReadFromAppSettings("appsettings.Development.json", "GcpSecrets", "SecretName");
+
+        // Um SecretName vazio é legítimo: significa que a app não usa o Secret Manager (as chaves
+        // vêm de env var). O que não pode é apontar para o secret DO TEMPLATE.
+        if (string.IsNullOrWhiteSpace(secretName))
+        {
+            return;
+        }
+
+        secretName.ShouldNotBe(
+            TemplateSecretName,
+            """
+            O GcpSecrets:SecretName ainda é o do TEMPLATE.
+
+            Esta aplicação vai ler as CHAVES DE CRIPTOGRAFIA do template — e vai funcionar, sem
+            reclamar de nada. Duas aplicações cifrando dados pessoais com a MESMA chave: a rotação
+            de uma quebra a outra, e quem tiver acesso ao secret de uma decifra a PII de todas.
+
+            Diferente da colisão de banco, este erro NUNCA falha sozinho. É silencioso para sempre.
+
+            Corrija em src/<SuaApi>/appsettings.Development.json (e no .Production.json):
+                "GcpSecrets": { "SecretName": "minha-app-secrets" }
+            """);
+    }
+
+    /// <summary>
     /// O slug é o que vira nome de banco e de role no Postgres — e o Postgres tem regras sobre
     /// isso. Um nome que gere um slug vazio (ex.: <c>"!!!"</c>) produziria <c>db_</c>, e o
     /// <c>CREATE DATABASE</c> falharia no bootstrap com uma mensagem que não aponta para a causa.
@@ -148,17 +212,35 @@ public class TemplateDerivationTests
     /// arquivo que a pessoa esqueceu de editar, e é sobre ele que o teste tem de falar.
     /// </para>
     /// </summary>
-    private static string ReadApplicationNameFromAppSettings()
-    {
-        var path = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+    private static string ReadApplicationNameFromAppSettings() =>
+        ReadFromAppSettings("appsettings.json", "Database", "ApplicationName")
+        ?? throw new InvalidOperationException("Database:ApplicationName não está no appsettings.json.");
 
-        File.Exists(path).ShouldBeTrue($"appsettings.json não encontrado em {path}");
+    /// <summary>
+    /// Lê uma chave do <c>appsettings</c> da <b>aplicação</b> (não o dos testes).
+    ///
+    /// <para>
+    /// Os arquivos são copiados para o diretório de saída da API, que é o mesmo dos testes (eles
+    /// referenciam o projeto). Lê-se o <b>arquivo</b>, e não a configuração já montada, de
+    /// propósito: é o arquivo que a pessoa esqueceu de editar, e é sobre ele que o teste tem de
+    /// falar.
+    /// </para>
+    /// </summary>
+    /// <returns><c>null</c> se o arquivo ou a chave não existirem.</returns>
+    private static string? ReadFromAppSettings(string fileName, string section, string key)
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, fileName);
+
+        if (!File.Exists(path))
+        {
+            return null;
+        }
 
         using var document = JsonDocument.Parse(File.ReadAllText(path));
 
-        return document.RootElement
-            .GetProperty("Database")
-            .GetProperty("ApplicationName")
-            .GetString()!;
+        return document.RootElement.TryGetProperty(section, out var sectionElement)
+            && sectionElement.TryGetProperty(key, out var value)
+                ? value.GetString()
+                : null;
     }
 }

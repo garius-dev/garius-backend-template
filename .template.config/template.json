@@ -35,6 +35,36 @@
       "parameters": {
         "defaultFormat": "D"
       }
+    },
+
+    "nameLower": {
+      "type": "derived",
+      "valueSource": "name",
+      "valueTransform": "lowerCase"
+    },
+
+    "gcpSecretName": {
+      "type": "generated",
+      "generator": "regex",
+      "dataType": "string",
+      "replaces": "gariustech-backend-template-secrets",
+      "parameters": {
+        "source": "nameLower",
+        "steps": [
+          {
+            "regex": "[^a-z0-9]+",
+            "replacement": "-"
+          },
+          {
+            "regex": "^-+|-+$",
+            "replacement": ""
+          },
+          {
+            "regex": "$",
+            "replacement": "-secrets"
+          }
+        ]
+      }
     }
   },
 

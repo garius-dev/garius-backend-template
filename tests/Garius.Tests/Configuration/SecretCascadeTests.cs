@@ -5,8 +5,8 @@ using Microsoft.Extensions.Hosting;
 namespace Garius.Tests.Configuration;
 
 /// <summary>
-/// Prova a cascata de configuração contra o <b>Google Secret Manager real</b> (projeto
-/// garius-tcm, secret gariustech-backend-template-secrets).
+/// Prova a cascata de configuração contra o <b>Google Secret Manager real</b> — o secret da
+/// própria aplicação, lido do <c>appsettings.Development.json</c>.
 ///
 /// <para>
 /// A ordem de precedência é o requisito:
@@ -20,22 +20,86 @@ namespace Garius.Tests.Configuration;
 /// </para>
 ///
 /// <para>
-/// Estes testes são <b>ignorados automaticamente</b> se não houver credencial do GCP na
-/// máquina (GOOGLE_APPLICATION_CREDENTIALS) — em CI sem credencial a suíte não quebra.
+/// Estes testes são <b>ignorados automaticamente</b> quando não há como executá-los: sem
+/// credencial do GCP na máquina (<c>GOOGLE_APPLICATION_CREDENTIALS</c>), ou quando o secret
+/// configurado <b>ainda não existe</b> — que é o estado de toda aplicação recém-derivada, antes
+/// de alguém criar o secret dela.
+/// </para>
+///
+/// <para>
+/// ⚠️ <b>Pular, e não falhar.</b> Uma app derivada nasceria com estes dois testes <b>vermelhos</b>
+/// até o secret ser criado — e um teste que falha por configuração ausente é um teste que todo
+/// mundo aprende a ignorar, inclusive quando ele passar a apontar um problema de verdade.
 /// </para>
 /// </summary>
 public class SecretCascadeTests
 {
     private const string ProjectId = "garius-tcm";
-    private const string SecretName = "gariustech-backend-template-secrets";
+
+    /// <summary>
+    /// O secret <b>da aplicação</b> — lido do <c>appsettings.Development.json</c>, e não escrito à
+    /// mão aqui.
+    ///
+    /// <para>
+    /// Escrito à mão, o <c>dotnet new</c> o substituiria pelo secret da app derivada (como faz com
+    /// todo o resto) e o teste passaria a apontar para um secret que talvez ainda não exista — o
+    /// que é exatamente o que acontecia. Lendo da configuração, o teste sempre fala do secret que
+    /// a aplicação <b>de fato</b> usa.
+    /// </para>
+    /// </summary>
+    private static string SecretName =>
+        new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory)
+            .AddJsonFile("appsettings.Development.json", optional: true)
+            .Build()["GcpSecrets:SecretName"]
+        ?? string.Empty;
 
     private static bool HasGcpCredentials =>
         !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS"));
 
+    /// <summary>
+    /// O secret existe de verdade no GCP? Uma aplicação recém-derivada aponta para um secret que
+    /// ainda não foi criado — e aí não há o que testar.
+    /// </summary>
+    private static bool SecretExists()
+    {
+        if (string.IsNullOrWhiteSpace(SecretName))
+        {
+            return false;
+        }
+
+        try
+        {
+            var client = Google.Cloud.SecretManager.V1.SecretManagerServiceClient.Create();
+
+            client.AccessSecretVersion(
+                new Google.Cloud.SecretManager.V1.SecretVersionName(ProjectId, SecretName, "latest"));
+
+            return true;
+        }
+        catch (Grpc.Core.RpcException)
+        {
+            // NotFound (o secret não existe) ou PermissionDenied (a credencial não o alcança).
+            // Nos dois casos: não há como rodar o teste, e falhar seria mentir sobre a causa.
+            return false;
+        }
+    }
+
+    /// <summary>Só roda se houver credencial <b>e</b> o secret existir.</summary>
+    private static void SkipUnlessSecretIsReachable()
+    {
+        Assert.SkipUnless(HasGcpCredentials, "Sem credencial do GCP nesta máquina.");
+
+        Assert.SkipUnless(
+            SecretExists(),
+            $"O secret '{SecretName}' (projeto {ProjectId}) não existe ou não está acessível. " +
+            "Numa aplicação recém-derivada, isto é o esperado até você criá-lo — ver o README.");
+    }
+
     [Fact]
     public void Secret_Manager_vence_o_appsettings()
     {
-        Assert.SkipUnless(HasGcpCredentials, "Sem credencial do GCP nesta máquina.");
+        SkipUnlessSecretIsReachable();
 
         var config = Build(
             environment: "Development",
@@ -54,7 +118,7 @@ public class SecretCascadeTests
     [Fact]
     public void Secret_Manager_vence_a_variavel_de_ambiente()
     {
-        Assert.SkipUnless(HasGcpCredentials, "Sem credencial do GCP nesta máquina.");
+        SkipUnlessSecretIsReachable();
 
         // No .NET, "__" é o separador de seção em variável de ambiente.
         Environment.SetEnvironmentVariable("Database__AppPassword", "valor-da-env-var");
@@ -142,17 +206,21 @@ public class SecretCascadeTests
             secretName: "secret-que-nao-existe"));
     }
 
+    /// <param name="secretName">
+    /// <c>null</c> = o secret da própria aplicação (o caso normal). Os testes que provam o
+    /// comportamento com um secret <b>inexistente</b> passam um nome explícito.
+    /// </param>
     private static IConfigurationRoot Build(
         string environment,
         Dictionary<string, string?> appsettings,
         bool gcpEnabled = true,
-        string secretName = SecretName)
+        string? secretName = null)
     {
         var settings = new Dictionary<string, string?>(appsettings)
         {
             ["GcpSecrets:Enabled"] = gcpEnabled.ToString(),
             ["GcpSecrets:ProjectId"] = ProjectId,
-            ["GcpSecrets:SecretName"] = secretName
+            ["GcpSecrets:SecretName"] = secretName ?? SecretName
         };
 
         var builder = new ConfigurationBuilder()
