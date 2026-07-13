@@ -119,53 +119,12 @@ O `dotnet new` já apontou a sua app para o secret **dela** (`tcm-sfchortolandia
   "Jwt:SigningKey": "<32 bytes em base64>",
 
   "Bootstrap:AdminEmail": "voce@empresa.com",
-  "Bootstrap:AdminPassword": "<uma senha forte, mínimo 12 caracteres>",
-
-  "_comment": "Abaixo: só em PRODUÇÃO. São ENDEREÇOS, não senhas — mas vivem aqui pela mesma razão que o resto: para o .env do servidor não crescer.",
-
-  "Database:Host": "postgres-prod",
-  "Redis:ConnectionString": "redis-prod:6379",
-  "Security:TrustedProxies:0": "172.18.0.0/16",
-  "Cors:AllowedOrigins:0": "https://app.suaapp.com"
+  "Bootstrap:AdminPassword": "<uma senha forte, mínimo 12 caracteres>"
 }
 ```
 
-> **As quatro últimas só entram no secret de produção.** Em desenvolvimento elas vêm do `appsettings.Development.json` (`localhost`), e é por isso que a app sobe local sem elas.
->
-> `Database:Host` e `Redis:ConnectionString` são o **nome do container** na rede Docker — nunca `localhost`: dentro de um container, `localhost` é o *próprio* container.
->
-A aplicação **não sobe** sem nenhum dos quatro — falha fechada, e o log diz qual falta. É o mesmo princípio de todo o resto: configuração ausente derruba o boot, nunca "degrada".
+> **O secret guarda só SENHAS e CHAVES — e é o mesmo em dev e em produção.** O que muda de ambiente é o `appsettings`: os endereços locais (`localhost`) estão no `appsettings.Development.json`, e os de produção (nomes dos containers, rede do Traefik, CORS) no `appsettings.Production.json`. Endereço não é segredo, e por isso não vai para o Secret Manager.
 
-#### `Security:TrustedProxies` — o que é, e por que não pode ficar vazio
-
-**Pegue o valor assim** (uma vez por servidor — é o mesmo para todas as suas apps):
-
-```bash
-docker network inspect garius_network --format '{{(index .IPAM.Config 0).Subnet}}'
-# → 172.18.0.0/16
-```
-
-É a **rede Docker do Traefik** — o endereço de quem entrega o request no seu container. **Não** é da Cloudflare (essa é outra camada; veja abaixo).
-
-**O problema que ele resolve.** O `X-Forwarded-For` é só um *header HTTP*: quem faz a requisição escreve o que quiser nele.
-
-```bash
-curl https://api.suaapp.com/auth/login -H "X-Forwarded-For: 1.2.3.4" -d '...'
-```
-
-Se a aplicação aceita esse header de **qualquer origem**, ela acredita que o request veio de `1.2.3.4` — porque o atacante disse que veio. E o template usa o IP para três coisas que então **deixam de funcionar**:
-
-| Usa o IP para | O que quebra se o header for falsificável |
-|---|---|
-| **Rate limit por IP** | o atacante manda um IP diferente a cada tentativa e o limite **nunca dispara** — o brute force de senha passa livre |
-| **Auditoria LGPD** | o log de acesso a dado pessoal registra o IP que o atacante escolheu |
-| **Lockout / anomalia** | idem: cada tentativa parece vir de alguém novo |
-
-**O que a lista faz.** Ela diz: *"só aceite o `X-Forwarded-For` se o request chegou **deste** endereço"*. Como o único que fala com o container é o Traefik (pela rede Docker), a lista é a rede do Traefik. Um request que chegue de outro lugar tem o header **ignorado**, e vale o IP real da conexão TCP.
-
-> ⚠️ **Não "resolva" isso deixando a lista vazia.** No ASP.NET, `KnownProxies` e `KnownNetworks` vazios significam **confiar em qualquer um** — e é por isso que a aplicação **se recusa a subir** nesse estado, em vez de aceitar em silêncio. Um rate limit que não limita é pior que nenhum: ele passa a impressão de que existe uma defesa.
-
-**E a Cloudflare?** É a camada de **fora** (internet → Traefik), e tem configuração própria — `Security:TrustCloudflareIps`, que já vem `true`. Ali o template usa o `CF-Connecting-IP`, validado contra os ranges publicados pela Cloudflare. O `TrustedProxies` cuida do salto **de dentro** (Traefik → container). São dois saltos, duas configurações.
 
 > **`Bootstrap:*` é o que resolve o ovo e a galinha.** Sem elas, a aplicação sobe **fechada** — a `FallbackPolicy` exige autenticação em tudo, o `/scalar` exige `docs.read`, o `/jobs` exige `jobs.read` — e não existe **nenhum usuário** para conceder permissão a ninguém. Nem para entrar e criar o primeiro.
 >
@@ -212,24 +171,56 @@ Aponte para ele em `appsettings.Development.json` e `appsettings.Production.json
 
 ### 3. Configure produção
 
-Em `appsettings.Production.json`:
+**Uma vez por aplicação**, no `appsettings.Production.json`. Nada aqui é segredo — são endereços, e é por isso que ficam no arquivo e não no Secret Manager:
 
 ```json
 {
-  "Security": {
-    "TrustedProxies": [ "172.18.0.0/16" ]
-  },
-  "Cors": {
-    "AllowedOrigins": [ "https://app.seudominio.com" ]
-  },
-  "Serilog": {
-    "Loki": { "Enabled": true, "Url": "http://loki:3100" }
-  }
+  "Database": { "Host": "postgres-prod" },
+  "Redis":    { "ConnectionString": "redis-prod:6379" },
+
+  "Security": { "TrustedProxies": [ "172.18.0.0/16" ] },
+  "Cors":     { "AllowedOrigins": [ "https://app.seudominio.com" ] },
+
+  "Serilog":  { "Loki": { "Enabled": true, "Url": "http://loki:3100" } }
 }
 ```
 
-- **`TrustedProxies` é obrigatório em produção** — a rede Docker do Traefik. Sem ele **a aplicação não sobe** (falha explícita e proposital, ver [Regras invioláveis](#regras-invioláveis)).
+- **`Database:Host` e `Redis:ConnectionString` são o nome do CONTAINER** na rede Docker — nunca `localhost`: dentro de um container, `localhost` é o *próprio* container.
+- **`TrustedProxies` é obrigatório em produção** — é a rede Docker do Traefik. Sem ele **a aplicação não sobe** (falha explícita e proposital — veja o porquê logo abaixo).
 - **`AllowedOrigins` vazio nega tudo.** Se houver frontend, declare a origem.
+
+> Depois disso, o deploy é só: `./deploy.ps1 -Push`, subir o `APP_VER` no `.env` do servidor, e `docker compose up -d`. O `.env` tem **cinco linhas** e não cresce.
+
+#### `Security:TrustedProxies` — o que é, e por que não pode ficar vazio
+
+**Pegue o valor assim** (uma vez por servidor — é o mesmo para todas as suas apps):
+
+```bash
+docker network inspect garius_network --format '{{(index .IPAM.Config 0).Subnet}}'
+# → 172.18.0.0/16
+```
+
+É a **rede Docker do Traefik** — o endereço de quem entrega o request no seu container. **Não** é da Cloudflare (essa é outra camada; veja abaixo).
+
+**O problema que ele resolve.** O `X-Forwarded-For` é só um *header HTTP*: quem faz a requisição escreve o que quiser nele.
+
+```bash
+curl https://api.suaapp.com/auth/login -H "X-Forwarded-For: 1.2.3.4" -d '...'
+```
+
+Se a aplicação aceita esse header de **qualquer origem**, ela acredita que o request veio de `1.2.3.4` — porque o atacante disse que veio. E o template usa o IP para três coisas que então **deixam de funcionar**:
+
+| Usa o IP para | O que quebra se o header for falsificável |
+|---|---|
+| **Rate limit por IP** | o atacante manda um IP diferente a cada tentativa e o limite **nunca dispara** — o brute force de senha passa livre |
+| **Auditoria LGPD** | o log de acesso a dado pessoal registra o IP que o atacante escolheu |
+| **Lockout / anomalia** | idem: cada tentativa parece vir de alguém novo |
+
+**O que a lista faz.** Ela diz: *"só aceite o `X-Forwarded-For` se o request chegou **deste** endereço"*. Como o único que fala com o container é o Traefik (pela rede Docker), a lista é a rede do Traefik. Um request que chegue de outro lugar tem o header **ignorado**, e vale o IP real da conexão TCP.
+
+> ⚠️ **Não "resolva" isso deixando a lista vazia.** No ASP.NET, `KnownProxies` e `KnownNetworks` vazios significam **confiar em qualquer um** — e é por isso que a aplicação **se recusa a subir** nesse estado, em vez de aceitar em silêncio. Um rate limit que não limita é pior que nenhum: ele passa a impressão de que existe uma defesa.
+
+**E a Cloudflare?** É a camada de **fora** (internet → Traefik), e tem configuração própria — `Security:TrustCloudflareIps`, que já vem `true`. Ali o template usa o `CF-Connecting-IP`, validado contra os ranges publicados pela Cloudflare. O `TrustedProxies` cuida do salto **de dentro** (Traefik → container). São dois saltos, duas configurações.
 
 ### 4. Decida a tenancy
 
