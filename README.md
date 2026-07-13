@@ -102,9 +102,18 @@ Daí saem os nomes no Postgres: `db_tcm_sfchortolandia_api`, `hangfire_tcm_sfcho
 
 > O **"Exportar Template" do Visual Studio não serve**: ele renomeia o namespace raiz, mas não sabe nada sobre o seu `appsettings.json` — e te deixa exatamente no erro silencioso do banco.
 
-### 2. Crie o secret no Google Secret Manager
+### 2. Crie os secrets no Google Secret Manager
 
-O `dotnet new` já apontou a sua app para o secret **dela** (`tcm-sfchortolandia-api-secrets`) — falta criá-lo. Um secret por aplicação, com um **JSON flat** (chaves no formato `Section:Key`):
+São **dois** — um por ambiente. O `dotnet new` já apontou a sua app para os dois nomes; falta criá-los:
+
+| Ambiente | Nome do secret | O que guarda |
+|---|---|---|
+| Desenvolvimento | `tcm-sfchortolandia-api-secrets-dev` | **só as senhas e as chaves** |
+| Produção | `tcm-sfchortolandia-api-secrets` | as senhas, as chaves **e os endereços** |
+
+> ⚠️ **Por que dois, e não um.** O Secret Manager **vence** o `appsettings` na cascata (é o último provider registrado). Com um secret só, as chaves de endereço de produção (`Database:Host = postgres-prod`) sobrescreveriam o `localhost` do `appsettings.Development.json` — e **a sua máquina passaria a tentar falar com os containers do servidor**. A app até sobe; o `/health/ready` é que fica pendurado para sempre. (Medido.)
+
+O conteúdo é um **JSON flat** (chaves no formato `Section:Key`). Comece pelo de **produção**, que é o completo:
 
 ```json
 {
@@ -121,12 +130,31 @@ O `dotnet new` já apontou a sua app para o secret **dela** (`tcm-sfchortolandia
   "Bootstrap:AdminEmail": "voce@empresa.com",
   "Bootstrap:AdminPassword": "<uma senha forte, mínimo 12 caracteres>",
 
-  "_comment": "Abaixo: só em PRODUÇÃO. São ENDEREÇOS, não senhas — mas vivem aqui pela mesma razão que o resto: para o .env do servidor não crescer.",
+  "_comment": "Abaixo: os ENDEREÇOS. Não são senhas, mas vivem aqui pela mesma razão que o resto — para o .env do servidor não crescer. SÓ no secret de produção.",
 
   "Database:Host": "postgres-prod",
   "Redis:ConnectionString": "redis-prod:6379",
   "Security:TrustedProxies:0": "172.18.0.0/16",
   "Cors:AllowedOrigins:0": "https://app.suaapp.com"
+}
+```
+
+E o de **desenvolvimento** (`...-secrets-dev`) é o **mesmo, menos os quatro endereços**:
+
+```json
+{
+  "Database:RootPassword": "<a senha do seu postgres local>",
+  "Database:AppPassword": "<única desta aplicação>",
+  "Redis:Password": "<a senha do seu Redis local>",
+
+  "Encryption:Keys:1": "<32 bytes em base64>",
+  "Encryption:ActiveKeyVersion": "1",
+  "Encryption:BlindIndexKey": "<32 bytes em base64>",
+
+  "Jwt:SigningKey": "<32 bytes em base64>",
+
+  "Bootstrap:AdminEmail": "voce@empresa.com",
+  "Bootstrap:AdminPassword": "<uma senha forte, mínimo 12 caracteres>"
 }
 ```
 
