@@ -1,4 +1,6 @@
 using System.Reflection;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using Garius.Api.Features.Auth;
 using Garius.Api.Features.Machine;
 using Garius.Api.Features.Permissions;
@@ -236,6 +238,31 @@ if (!app.Environment.IsProduction())
 {
     app.MapTestEndpoints();
 }
+
+// ONDE a aplicação está escutando.
+//
+// Parece supérfluo — o ASP.NET Core já loga "Now listening on: ...". Só que esse log sai sob
+// Microsoft.Hosting.Lifetime, e o filtro do Serilog põe "Microsoft" em Warning (é a regra dos
+// logs limpos, e ela é deliberada). Resultado: o boot termina com "Iniciando {App}" e MAIS
+// NADA — a aplicação está no ar, escutando, e PARECE TRAVADA. Já custou uma sessão inteira de
+// diagnóstico, e custaria de novo a cada pessoa que derivasse este template.
+//
+// Sob o namespace da própria aplicação, este log NÃO é silenciado.
+//
+// No ApplicationStarted, e não antes do Run(): só aqui o Kestrel já resolveu os endereços
+// REAIS. Antes disso eles não existem — e num container eles não são os do launchSettings.
+app.Lifetime.ApplicationStarted.Register(() =>
+{
+    var addresses = app.Services
+        .GetService<IServer>()?
+        .Features.Get<IServerAddressesFeature>()?
+        .Addresses;
+
+    if (addresses is { Count: > 0 })
+    {
+        Log.Information("Escutando em {Addresses}", string.Join(", ", addresses));
+    }
+});
 
 try
 {

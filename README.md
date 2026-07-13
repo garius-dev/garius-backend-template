@@ -1072,6 +1072,19 @@ MIGRATE_ONLY=true dotnet run --project src/Garius.Api    # bootstrap do banco
 dotnet run --project src/Garius.Api                      # sobe a API
 ```
 
+Um boot saudável termina assim — **duas** linhas:
+
+```
+[15:34:50 INF] Iniciando Garius.Api em Development
+[15:34:50 INF] Escutando em http://localhost:5226
+```
+
+> **A segunda linha existe por um motivo.** O ASP.NET Core já loga `Now listening on: ...`, mas
+> sob `Microsoft.Hosting.Lifetime` — e o filtro do Serilog põe `Microsoft` em `Warning` (é a
+> regra dos *logs limpos*, e ela é deliberada). Sem esta linha, o boot termina em `Iniciando` e
+> **mais nada**: a aplicação está no ar, escutando, e *parece travada*. A porta é a do
+> `launchSettings.json` (**5226**), não a 5000.
+
 | Endpoint | Para quê |
 |---|---|
 | `/` | ping |
