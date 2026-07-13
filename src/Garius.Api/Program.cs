@@ -49,7 +49,27 @@ builder.ConfigureSerilog();
 // Falha no boot se as chaves não estiverem configuradas — uma app que sobe sem chave
 // gravaria PII em claro ou quebraria no primeiro insert.
 builder.Services.AddHttpContextAccessor();
-builder.Services.AddScoped<ICurrentUser, HttpCurrentUser>();
+
+// QUEM está fazendo a operação (a auditoria da criptografia precisa disto).
+//
+// São DUAS implementações, uma por modo — e não é preciosismo:
+//
+// O HttpCurrentUser depende do IPermissionResolver, que só é registrado lá embaixo
+// (AddPermissionAuthorization), DEPOIS do `return` do migrateOnly. Registrá-lo no bootstrap
+// fazia o builder.Build() estourar na validação do container — e o MIGRATE_ONLY NÃO RODAVA.
+// Nenhuma app derivada conseguia criar o próprio banco.
+//
+// No bootstrap não há HTTP, não há requisição e não há usuário: o SystemCurrentUser diz
+// exatamente isso, e nega toda permissão (falha fechada). Ver SystemCurrentUser.
+if (migrateOnly)
+{
+    builder.Services.AddScoped<ICurrentUser, SystemCurrentUser>();
+}
+else
+{
+    builder.Services.AddScoped<ICurrentUser, HttpCurrentUser>();
+}
+
 builder.Services.AddFieldEncryption(builder.Configuration);
 
 var naming = builder.Services.AddPersistence(
