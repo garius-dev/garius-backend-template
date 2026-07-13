@@ -65,6 +65,40 @@
           }
         ]
       }
+    },
+
+    // O slug em kebab-case: "Tcm.SfcHortolandia.Api" -> "tcm-sfchortolandia-api".
+    //
+    // Ele é o PROJECT_NAME no .env, o nome da imagem no Docker Hub, o nome dos
+    // containers e — via fileRename — o nome da pasta em docker/prod/apps/.
+    //
+    // Sem isto, uma app derivada herdaria os containers e a imagem do TEMPLATE, e
+    // duas apps no mesmo servidor colidiriam no nome do container. É a mesma
+    // classe de colisão silenciosa que o Database:ApplicationName resolve no banco.
+    //
+    // ⚠️ A ordem importa: este símbolo tem de vir DEPOIS do gcpSecretName. O
+    // `replaces` do gcpSecretName é a string mais longa (…-template-secrets) e
+    // precisa casar primeiro; se este casasse antes, sobraria um "-secrets" órfão
+    // grudado no slug novo.
+    "projectSlug": {
+      "type": "generated",
+      "generator": "regex",
+      "dataType": "string",
+      "replaces": "gariustech-backend-template",
+      "fileRename": "gariustech-backend-template",
+      "parameters": {
+        "source": "nameLower",
+        "steps": [
+          {
+            "regex": "[^a-z0-9]+",
+            "replacement": "-"
+          },
+          {
+            "regex": "^-+|-+$",
+            "replacement": ""
+          }
+        ]
+      }
     }
   },
 

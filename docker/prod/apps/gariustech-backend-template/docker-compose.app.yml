@@ -1,0 +1,107 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Compose da APLICAÇÃO (produção).
+#
+# Este arquivo NÃO sobe infraestrutura. Traefik, Postgres, Redis e Loki já rodam
+# no servidor, na rede `garius_network` (externa). Aqui só entram os dois
+# containers da app.
+#
+# Como usar:
+#   cp .env.example .env                  # e preencha
+#   cp <sua-service-account>.json secrets/gcp-service-account.json
+#   docker compose -f docker-compose.app.yml up -d
+#
+# ⚠️ O `.env` e a pasta `secrets/` NÃO vão para o git (ver .gitignore da raiz).
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  # A MESMA imagem da API, com MIGRATE_ONLY=true: cria banco, roles, grants,
+  # aplica as migrations e MORRE com exit 0.
+  #
+  # É um container ÚNICO, e a API só sobe depois que ele termina com sucesso
+  # (`service_completed_successfully`). É isso que garante que N réplicas da API
+  # nunca disputem um CREATE DATABASE nem rodem migrations concorrentes.
+  #
+  # Se as migrations falharem, ele sai != 0, a API NÃO sobe, e o deploy para
+  # aqui — que é exatamente o que se quer. Falha fechada.
+  #
+  # (Uma falha de configuração aparece como exit 139, não 1: é o CLR abortando ao
+  # imprimir a exceção não tratada. Não é um bug — e não muda nada aqui, porque
+  # `service_completed_successfully` só aceita exit 0. Qualquer outro código
+  # segura a API no chão, que é o contrato.)
+  migrations:
+    image: ${DOCKER_HUB_PROFILE}/${PROJECT_NAME}:${APP_VER}
+    container_name: ${PROJECT_NAME}-migrations
+    environment:
+      - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT}
+      - MIGRATE_ONLY=true
+      - GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/gcp_service_account
+    secrets:
+      - gcp_service_account
+    networks:
+      - garius_network
+    restart: "no"   # um job, não um serviço: reiniciar sozinho seria errado.
+
+  api:
+    image: ${DOCKER_HUB_PROFILE}/${PROJECT_NAME}:${APP_VER}
+    container_name: ${PROJECT_NAME}-api
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    environment:
+      - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT}
+      # Onde a app acha a service account, que por sua vez destrava o Google
+      # Secret Manager (senhas do banco, chaves de criptografia, JWT). Sem isto a
+      # app NÃO SOBE — é fail-fast deliberado, não um bug.
+      - GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/gcp_service_account
+    secrets:
+      - gcp_service_account
+    healthcheck:
+      # Bate em /health/live — o endpoint que EXISTE (ver HealthSetup.cs). Não é
+      # /healthz: esse nunca existiu neste template, e um healthcheck apontado
+      # para um 404 fica unhealthy para sempre, ou (pior) alguém "conserta"
+      # apagando o healthcheck.
+      #
+      # Faz a requisição com o /dev/tcp do bash porque a imagem `aspnet` não tem
+      # curl nem wget, e instalá-los só para isto engorda o runtime e amplia a
+      # superfície. O `grep` no status é o que dá DENTES ao teste: sem ele, um
+      # 404 ou um 503 também "conectam" e passariam.
+      test:
+        - CMD
+        - bash
+        - -c
+        - exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /health/live HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && grep -q '200 OK' <&3
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    labels:
+      - traefik.enable=true
+
+      # Porta INTERNA do container (o Dockerfile roda como não-root e escuta 8080).
+      # Nada aqui é publicado no host: quem fala com a internet é o Traefik.
+      - traefik.http.services.${PROJECT_NAME}.loadbalancer.server.port=8080
+
+      # --- HTTPS ---
+      - traefik.http.routers.${PROJECT_NAME}.rule=Host(`${APP_HOST}`)
+      - traefik.http.routers.${PROJECT_NAME}.entrypoints=websecure
+      - traefik.http.routers.${PROJECT_NAME}.tls=true
+      - traefik.http.routers.${PROJECT_NAME}.tls.certresolver=myresolver
+
+      # --- HTTP -> HTTPS (a porta 80 fica aberta para o challenge do Let's Encrypt) ---
+      - traefik.http.routers.${PROJECT_NAME}-http.rule=Host(`${APP_HOST}`)
+      - traefik.http.routers.${PROJECT_NAME}-http.entrypoints=web
+      - traefik.http.routers.${PROJECT_NAME}-http.middlewares=https-redirect@docker
+    networks:
+      - garius_network
+    restart: unless-stopped
+
+secrets:
+  gcp_service_account:
+    file: ./secrets/gcp-service-account.json
+
+networks:
+  # `external: true` = criada FORA daqui, junto com a infra. Este compose não a
+  # cria; se ela não existir, ele falha na hora — e é melhor assim do que subir
+  # numa rede nova, isolada, onde a app não enxerga o Postgres.
+  garius_network:
+    external: true

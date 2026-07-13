@@ -1019,6 +1019,36 @@ Isso elimina a concorrência por construção: o container de migrations é úni
 
 > **A constante é `MIGRATE_ONLY`.** Ela é definida em **um único lugar** (`PersistenceExtensions.MigrateOnlyKey`) de propósito: no template anterior, o compose mandava `MIGRATE_ONLY` e o código lia `MIGRATION_ONLY` — uma letra de diferença, e **o deploy falhava 100% das vezes no primeiro boot**.
 
+### Uma imagem, não duas
+
+O `Dockerfile` na raiz produz **uma** imagem, e ela serve os dois containers acima — quem decide o papel é a env var, não a tag. Não existe uma imagem `-migration` separada: ela seria bit a bit idêntica à da API, e manter duas dobra o build, o push e a chance de subir a API numa versão e a migration em outra.
+
+A imagem roda como **não-root** (usuário `app`, uid 1654) e escuta na **8080**. Nada é publicado no host: quem fala com a internet é o Traefik.
+
+> ⚠️ O `Dockerfile` copia o **`.editorconfig`** antes de compilar, e isso não é decoração. É ele que calibra os analisadores, e aqui *warning é erro*. Sem ele o build passa liso na sua máquina e **quebra dentro do container** (CA1000, CA1711, CA1716…) — o pior tipo de erro, o que só aparece no deploy.
+
+### O que subir, e como
+
+```powershell
+./deploy.ps1            # clean + build + testes + imagem local
+./deploy.ps1 -Push      # ... e publica no Docker Hub
+```
+
+O script roda a suíte **antes** de empacotar (publicar uma imagem que não passa nos testes é publicar um deploy que vai falhar no servidor, onde é caro descobrir) e **recusa republicar uma tag que já existe** — senão o servidor faz `pull` e recebe um binário *diferente* com o mesmo número de versão.
+
+No servidor, em `docker/prod/apps/<sua-app>/`:
+
+```bash
+cp .env.example .env                                  # e preencha (APP_VER, APP_HOST…)
+cp <service-account>.json secrets/gcp-service-account.json
+docker compose -f docker-compose.app.yml pull
+docker compose -f docker-compose.app.yml up -d
+```
+
+O compose **não sobe infraestrutura**: ele assume Traefik, Postgres, Redis e Loki já rodando na rede `garius_network` (externa). O único segredo que vive no servidor é o JSON da service account — é ele que destrava o Google Secret Manager, de onde vêm senha do banco, chaves de criptografia e a do JWT.
+
+> **`.env` e `secrets/` nunca vão para o git.** O `.gitignore` já bloqueia os dois. Essa regra existe porque no template **anterior** havia uma exceção (`!docker/**/secrets/gcp-service-account.json`) que vazou a chave para dentro do repositório.
+
 ### Topologia
 
 ```
