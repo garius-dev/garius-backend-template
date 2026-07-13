@@ -119,9 +119,28 @@ O `dotnet new` já apontou a sua app para o secret **dela** (`tcm-sfchortolandia
   "Jwt:SigningKey": "<32 bytes em base64>",
 
   "Bootstrap:AdminEmail": "voce@empresa.com",
-  "Bootstrap:AdminPassword": "<uma senha forte, mínimo 12 caracteres>"
+  "Bootstrap:AdminPassword": "<uma senha forte, mínimo 12 caracteres>",
+
+  "_comment": "Abaixo: só em PRODUÇÃO. São ENDEREÇOS, não senhas — mas vivem aqui pela mesma razão que o resto: para o .env do servidor não crescer.",
+
+  "Database:Host": "postgres-prod",
+  "Redis:ConnectionString": "redis-prod:6379",
+  "Security:TrustedProxies:0": "172.18.0.0/16",
+  "Cors:AllowedOrigins:0": "https://app.suaapp.com"
 }
 ```
+
+> **As quatro últimas só entram no secret de produção.** Em desenvolvimento elas vêm do `appsettings.Development.json` (`localhost`), e é por isso que a app sobe local sem elas.
+>
+> `Database:Host` e `Redis:ConnectionString` são o **nome do container** na rede Docker — nunca `localhost`: dentro de um container, `localhost` é o *próprio* container.
+>
+> `Security:TrustedProxies` é a rede do Traefik, e é o mais traiçoeiro dos quatro: sem ele o ASP.NET **ignora** o `X-Forwarded-For`, e todo request chega com o IP do proxy. O rate limit passa a tratar **todos os usuários como um só**, o lockout e a auditoria mentem, e — pior — sem o `X-Forwarded-Proto` o cookie de sessão sai **sem a flag `Secure`**. Descubra o valor com:
+>
+> ```bash
+> docker network inspect garius_network --format '{{(index .IPAM.Config 0).Subnet}}'
+> ```
+>
+> A aplicação **não sobe** sem nenhum dos quatro — falha fechada, e o log diz qual falta. É o mesmo princípio de todo o resto: configuração ausente derruba o boot, nunca "degrada".
 
 > **`Bootstrap:*` é o que resolve o ovo e a galinha.** Sem elas, a aplicação sobe **fechada** — a `FallbackPolicy` exige autenticação em tudo, o `/scalar` exige `docs.read`, o `/jobs` exige `jobs.read` — e não existe **nenhum usuário** para conceder permissão a ninguém. Nem para entrar e criar o primeiro.
 >

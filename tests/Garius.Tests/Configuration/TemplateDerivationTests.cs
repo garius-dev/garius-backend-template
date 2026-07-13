@@ -175,6 +175,53 @@ public class TemplateDerivationTests
     }
 
     /// <summary>
+    /// <b>Se o Secret Manager está LIGADO em produção, as coordenadas têm de estar lá.</b>
+    ///
+    /// <para>
+    /// <b>Este teste nasceu de um bug que quebrava TODA app derivada no primeiro deploy.</b> O
+    /// <c>appsettings.Production.json</c> ligava <c>GcpSecrets:Enabled = true</c> e <b>não</b>
+    /// definia <c>ProjectId</c> nem <c>SecretName</c> — eles só existiam no
+    /// <c>appsettings.Development.json</c>. Em produção a aplicação morria no boot:
+    /// <i>"GcpSecrets:Enabled=true, mas ProjectId ou SecretName não foram configurados"</i>.
+    /// </para>
+    ///
+    /// <para>
+    /// Passou despercebido porque <b>toda a suíte roda com o Secret Manager DESLIGADO</b> (os
+    /// testes não podem depender de rede nem de credencial) — e em desenvolvimento as
+    /// coordenadas existem. O único cenário quebrado era o único que ninguém exercitava, e ele
+    /// só aparece no deploy.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Producao_com_o_Secret_Manager_LIGADO_precisa_das_coordenadas()
+    {
+        var enabled = ReadFromAppSettings("appsettings.Production.json", "GcpSecrets", "Enabled");
+
+        // Desligado é legítimo: as chaves podem vir de variável de ambiente.
+        if (!string.Equals(enabled, "true", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        ReadFromAppSettings("appsettings.Production.json", "GcpSecrets", "ProjectId")
+            .ShouldNotBeNullOrWhiteSpace(
+                """
+                GcpSecrets:Enabled = true no appsettings.Production.json, mas SEM o ProjectId.
+
+                A aplicação NÃO SOBE em produção — morre no boot, antes de servir uma requisição.
+                (ProjectId e SecretName não são segredo: são coordenadas. O segredo é o CONTEÚDO.)
+                """);
+
+        ReadFromAppSettings("appsettings.Production.json", "GcpSecrets", "SecretName")
+            .ShouldNotBeNullOrWhiteSpace(
+                """
+                GcpSecrets:Enabled = true no appsettings.Production.json, mas SEM o SecretName.
+
+                A aplicação NÃO SOBE em produção — morre no boot, antes de servir uma requisição.
+                """);
+    }
+
+    /// <summary>
     /// O slug é o que vira nome de banco e de role no Postgres — e o Postgres tem regras sobre
     /// isso. Um nome que gere um slug vazio (ex.: <c>"!!!"</c>) produziria <c>db_</c>, e o
     /// <c>CREATE DATABASE</c> falharia no bootstrap com uma mensagem que não aponta para a causa.
@@ -238,9 +285,16 @@ public class TemplateDerivationTests
 
         using var document = JsonDocument.Parse(File.ReadAllText(path));
 
-        return document.RootElement.TryGetProperty(section, out var sectionElement)
-            && sectionElement.TryGetProperty(key, out var value)
-                ? value.GetString()
-                : null;
+        if (!document.RootElement.TryGetProperty(section, out var sectionElement)
+            || !sectionElement.TryGetProperty(key, out var value))
+        {
+            return null;
+        }
+
+        // GetString() SÓ funciona em JsonValueKind.String — num booleano ele LANÇA. E há chaves
+        // booleanas aqui (GcpSecrets:Enabled), então o texto cru serve para todas.
+        return value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : value.GetRawText();
     }
 }
