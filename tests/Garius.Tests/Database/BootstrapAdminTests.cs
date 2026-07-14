@@ -111,6 +111,112 @@ public class BootstrapAdminTests(DatabaseFixture fixture) : IClassFixture<Databa
     }
 
     /// <summary>
+    /// <b>O e-mail do admin NÃO pode aparecer em claro em NENHUMA coluna da tabela.</b>
+    ///
+    /// <para>
+    /// Este teste nasceu de um vazamento real. O seeder fazia <c>UserName = settings.AdminEmail</c>,
+    /// e isso <b>anulava a criptografia inteira</b>: o <c>Email</c> ia cifrado (AES-GCM), o
+    /// <c>NormalizedEmail</c> virava índice cego (HMAC) — e o e-mail em claro reaparecia,
+    /// perfeitamente legível, na coluna <c>UserName</c> logo ao lado. Quem abrisse a tabela
+    /// <c>users</c> lia <c>admin@empresa.com</c> sem esforço nenhum. Toda a proteção de LGPD
+    /// virava teatro, e a conta exposta era <b>a mais poderosa do sistema</b>.
+    /// </para>
+    ///
+    /// <para>
+    /// A varredura é feita em <b>SQL cru, sobre TODAS as colunas de texto</b>, e não pelo EF —
+    /// de propósito. Uma consulta pelo EF descriptografaria o campo em memória e o teste passaria
+    /// pela razão errada, que é o pior tipo de teste de segurança: o que dá verde com o bug
+    /// presente. Aqui o que se lê é <b>o que está gravado no disco</b>.
+    /// </para>
+    ///
+    /// <para>
+    /// Varrer todas as colunas (em vez de checar só o <c>UserName</c>) é o que dá dentes ao
+    /// teste: ele pega o vazamento de novo se alguém, no futuro, adicionar um
+    /// <c>DisplayName = email</c> ou um campo de "login" qualquer.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task O_email_do_admin_NAO_aparece_em_claro_em_NENHUMA_coluna()
+    {
+        await using var app = Build();
+
+        await app.BootstrapAsync(AdminEmail, AdminPassword);
+
+        var user = await app.UserManager.FindByEmailAsync(AdminEmail);
+        user.ShouldNotBeNull();
+
+        // SQL CRU: o que está no disco, sem o EF descriptografar nada pelo caminho.
+        var connection = app.Db.Database.GetDbConnection();
+
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+        try
+        {
+            var leaked = new List<string>();
+
+            await using var command = connection.CreateCommand();
+
+            // Concatena TODAS as colunas de texto da linha e procura o e-mail dentro.
+            command.CommandText = """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'users'
+                  AND data_type IN ('text', 'character varying', 'character')
+                """;
+
+            var textColumns = new List<string>();
+
+            await using (var reader = await command.ExecuteReaderAsync(
+                TestContext.Current.CancellationToken))
+            {
+                while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+                {
+                    textColumns.Add(reader.GetString(0));
+                }
+            }
+
+            textColumns.ShouldNotBeEmpty("a tabela users tem colunas de texto");
+
+            foreach (var column in textColumns)
+            {
+                await using var probe = connection.CreateCommand();
+
+                // O nome da coluna vem do information_schema (não de entrada do usuário), e vai
+                // entre aspas duplas. O e-mail procurado vai como PARÂMETRO.
+                probe.CommandText =
+                    $"""SELECT COUNT(*) FROM users WHERE "{column}" LIKE '%' || @email || '%'""";
+
+                var parameter = probe.CreateParameter();
+                parameter.ParameterName = "@email";
+                parameter.Value = AdminEmail;
+                probe.Parameters.Add(parameter);
+
+                var hits = Convert.ToInt64(
+                    await probe.ExecuteScalarAsync(TestContext.Current.CancellationToken),
+                    System.Globalization.CultureInfo.InvariantCulture);
+
+                if (hits > 0)
+                {
+                    leaked.Add(column);
+                }
+            }
+
+            leaked.ShouldBeEmpty(
+                $"o e-mail do admin está EM CLARO na(s) coluna(s): {string.Join(", ", leaked)}. " +
+                "A criptografia de PII só vale se o dado não reaparecer legível na coluna ao lado.");
+
+            // E o UserName é um identificador OPACO — o próprio Id.
+            user.UserName.ShouldBe(
+                user.Id.ToString(),
+                "o UserName é o Id: não revela nada e é único por construção");
+        }
+        finally
+        {
+            await connection.CloseAsync();
+        }
+    }
+
+    /// <summary>
     /// Falha FECHADA: sem as chaves configuradas, NENHUM usuário é criado.
     ///
     /// <para>

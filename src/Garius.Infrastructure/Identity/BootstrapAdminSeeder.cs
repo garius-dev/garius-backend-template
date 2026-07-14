@@ -76,13 +76,26 @@ public sealed class BootstrapAdminSeeder(
             return;
         }
 
-        var admin = new ApplicationUser
-        {
-            UserName = settings.AdminEmail,
-            EmailPii = Pii.Create(PiiScope.Email, settings.AdminEmail),
-            EmailConfirmed = true,
-            DisplayName = "Administrador",
-        };
+        var admin = new ApplicationUser();
+
+        // ⚠️ O UserName NÃO recebe o e-mail.
+        //
+        // Foi assim que este seeder nasceu, e anulava a criptografia inteira: o Email fica
+        // cifrado (EmailPii) e o NormalizedEmail vira índice cego — mas o e-mail em claro
+        // reaparecia, legível, na coluna ao lado. Quem abrisse a tabela `users` lia
+        // `admin@empresa.com` sem esforço nenhum, e a proteção de LGPD virava teatro.
+        //
+        // O UserName é o Id: um identificador OPACO, que não revela nada e é único por
+        // construção (Guid v7) — o que satisfaz o índice único do Identity, que NÃO é parcial
+        // (ver UserNameIndex na InitialCreate) e portanto não tolera duplicata nem entre
+        // registros já apagados por soft delete.
+        //
+        // O e-mail continua sendo como se ENTRA (FindByEmailAsync, login). Ninguém autentica
+        // pelo UserName.
+        admin.UserName = admin.Id.ToString();
+        admin.EmailPii = Pii.Create(PiiScope.Email, settings.AdminEmail);
+        admin.EmailConfirmed = true;
+        admin.DisplayName = "Administrador";
 
         var created = await userManager.CreateAsync(admin, settings.AdminPassword);
 
