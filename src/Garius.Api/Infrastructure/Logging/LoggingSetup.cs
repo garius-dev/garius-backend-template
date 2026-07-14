@@ -60,7 +60,29 @@ internal static class LoggingSetup
         var lokiEnabled = builder.Configuration.GetValue<bool>("Serilog:Loki:Enabled");
         var lokiUrl = builder.Configuration["Serilog:Loki:Url"];
 
-        if (lokiEnabled && !string.IsNullOrWhiteSpace(lokiUrl))
+        // ⚠️ FALHA FECHADA: Loki ligado e sem Url derruba o boot.
+        //
+        // Antes, a condição do `if` abaixo exigia as duas coisas e simplesmente NÃO registrava o
+        // sink quando a Url faltava. Foi exatamente o que aconteceu em produção: o
+        // appsettings.Production.json ligava `Enabled: true` e nunca definia a `Url` — a
+        // aplicação subia, logava só no console, e o Loki ficava VAZIO.
+        //
+        // Sem um erro. Sem um aviso. O deploy passava, o health check passava, e a única pista
+        // era a ausência de algo — que ninguém procura até precisar do log de um incidente e
+        // descobrir que não existe log nenhum.
+        //
+        // Observabilidade que falha em silêncio é PIOR que não ter observabilidade: você acha
+        // que tem. Se alguém pediu Loki, ou ele funciona, ou a aplicação não sobe.
+        if (lokiEnabled && string.IsNullOrWhiteSpace(lokiUrl))
+        {
+            throw new InvalidOperationException(
+                "Serilog:Loki:Enabled=true, mas Serilog:Loki:Url não foi configurada. " +
+                "Sem a URL, o sink do Loki NÃO é registrado e a aplicação subiria sem " +
+                "observabilidade nenhuma, em silêncio. Configure a URL (em produção, o nome do " +
+                "container: http://loki:3100) ou desligue o Loki explicitamente.");
+        }
+
+        if (lokiEnabled)
         {
             configuration.WriteTo.GrafanaLoki(
                 lokiUrl,
