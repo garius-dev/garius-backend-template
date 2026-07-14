@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using Shouldly;
 
 namespace Garius.Tests.Configuration;
@@ -110,56 +111,85 @@ public class ComposeFileTests
     }
 
     /// <summary>
-    /// O secret precisa ser montado com o <b>uid do usuário do container</b> — senão a aplicação
-    /// não consegue ler a própria credencial.
+    /// A aplicação precisa conseguir <b>ler a própria credencial</b> dentro do container.
     ///
     /// <para>
-    /// <b>Este teste nasceu no primeiro deploy que chegou ao servidor.</b> O container morreu com:
+    /// <b>Este teste nasceu de um deploy que falhou DUAS vezes.</b> O container morria com:
     /// </para>
     ///
     /// <code>Access to the path '/run/secrets/gcp_service_account' is denied.</code>
     ///
     /// <para>
-    /// Duas decisões corretas que, juntas, se anulavam: o <c>deploy.ps1</c> grava a service
-    /// account com modo <b>600</b> (é uma credencial — com 777 qualquer usuário do servidor lê a
-    /// chave que abre a senha do banco e as chaves de criptografia); e o container roda como
-    /// <b>não-root</b> (<c>app</c>, uid 1654). O Docker monta o secret <b>preservando o dono do
-    /// host</b> — e o processo, sendo outro usuário, fica trancado do lado de fora.
+    /// Duas decisões corretas que, juntas, se anulavam: o container roda como <b>não-root</b>
+    /// (<c>app</c>, uid 1654) e o <c>deploy.ps1</c> gravava a service account com modo
+    /// <b>600</b>. O Docker monta o secret como um <b>bind mount comum</b>, preservando o dono
+    /// do host — e o processo, sendo outro usuário, ficava trancado do lado de fora.
     /// </para>
     ///
     /// <para>
-    /// A saída não é afrouxar a permissão: é o compose declarar <b>para quem</b> montar. Assim o
-    /// arquivo continua 600 no host <b>e</b> legível dentro do container.
+    /// <b>E a primeira correção não funcionou:</b> pôr <c>uid:</c> no compose. Isso só vale no
+    /// Docker <b>Swarm</b> — num <c>docker compose</c> normal o Docker IGNORA (e avisa que está
+    /// ignorando). O teste da época verificava que a linha <i>existia</i> no YAML, não que ela
+    /// <i>funcionava</i>. Era decoração, e o deploy falhou de novo.
+    /// </para>
+    ///
+    /// <para>
+    /// Este teste é diferente: ele <b>monta o arquivo num container real</b>, como o usuário
+    /// real, e tenta lê-lo. É o comportamento, não o texto do YAML.
     /// </para>
     /// </summary>
     [Fact]
-    public void O_secret_e_montado_com_o_uid_do_usuario_do_container()
+    public void Um_container_NAO_ROOT_consegue_ler_o_secret_com_a_permissao_que_o_deploy_grava()
     {
-        var appDir = FindAppDirectory();
+        // O modo que o deploy.ps1 grava no servidor.
+        var deploy = File.ReadAllText(FindDeployScript());
 
-        var compose = File.ReadAllText(Path.Combine(appDir, "docker-compose.app.yml"));
-        var dockerfile = File.ReadAllText(FindRepositoryFile("Dockerfile"));
+        var mode = Regex.Match(deploy, @"chmod (\d{3}) '\$remoteFolder/secrets/gcp-service-account\.json'")
+            .Groups[1].Value;
 
-        // O container NÃO roda como root — é o que torna o uid necessário.
-        dockerfile.ShouldContain(
-            "USER app",
-            customMessage: "a imagem precisa rodar como não-root");
+        mode.ShouldNotBeNullOrEmpty("o deploy.ps1 precisa definir a permissão da service account");
 
-        // E o compose precisa dizer ao Docker para quem montar o secret.
-        compose.ShouldContain(
-            "uid:",
-            customMessage:
-                """
-                O compose monta o secret sem declarar o uid.
+        // O uid do usuário da imagem (o Dockerfile roda como não-root).
+        const string containerUid = "1654";
 
-                O Docker preserva o dono do arquivo no host (o seu usuário), mas o container roda
-                como `app` (uid 1654, não-root) — e o arquivo é 600. A aplicação morre no boot com:
+        var temp = Directory.CreateTempSubdirectory();
 
-                    Access to the path '/run/secrets/gcp_service_account' is denied.
+        try
+        {
+            var secret = Path.Combine(temp.FullName, "sa.json");
+            File.WriteAllText(secret, "{}");
 
-                Use a sintaxe longa, com `uid: "1654"`.
-                """);
+            // Reproduz o servidor: o arquivo pertence ao usuário do DEPLOY (outro uid), com o
+            // modo que o deploy.ps1 grava.
+            Docker($"run --rm -v \"{temp.FullName}:/w\" alpine sh -c \"chown 1002:1002 /w/sa.json && chmod {mode} /w/sa.json\"");
+
+            // E o container tenta ler, como o usuário NÃO-ROOT da imagem.
+            var (exitCode, _, _) = Docker(
+                $"run --rm --user {containerUid}:{containerUid} " +
+                $"-v \"{secret}:/run/secrets/s:ro\" alpine cat /run/secrets/s");
+
+            exitCode.ShouldBe(
+                0,
+                $"""
+                 O container NÃO consegue ler a service account (modo {mode}).
+
+                 A aplicação morre no boot com:
+                     Access to the path '/run/secrets/gcp_service_account' is denied.
+
+                 O container roda como não-root (uid {containerUid}) e o Docker monta o secret
+                 preservando o dono do host. Um `uid:` no compose NÃO resolve — só funciona no
+                 Swarm. A permissão tem de vir do arquivo (a pasta secrets/ é 700, então isso
+                 não expõe nada a mais no host).
+                 """);
+        }
+        finally
+        {
+            temp.Delete(recursive: true);
+        }
     }
+
+    private static (int ExitCode, string Output, string Error) Docker(string arguments) =>
+        Run("docker", arguments, Path.GetTempPath());
 
     private static string FindRepositoryFile(string fileName)
     {

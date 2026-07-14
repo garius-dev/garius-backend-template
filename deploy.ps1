@@ -337,9 +337,21 @@ Ponha o JSON que o GCP te deu nessa pasta. O nome não importa: o deploy o renom
         Invoke-Remote "mv '$remoteFolder/secrets/$($serviceAccount.Name)' '$remoteFolder/secrets/gcp-service-account.json'"
     }
 
-    # 600, não 777: é uma CREDENCIAL. Com 777, qualquer usuário do servidor lê a chave que
-    # abre todos os segredos da aplicação — senha do banco, chaves de criptografia, JWT.
-    Invoke-Remote "chmod 700 '$remoteFolder/secrets' && chmod 600 '$remoteFolder/secrets/gcp-service-account.json'"
+    # A PASTA é 700 — é ela que protege. O ARQUIVO é 644, e isso não é um relaxamento:
+    #
+    # O container roda como NÃO-ROOT (`app`, uid 1654) e o Docker monta o secret como um bind
+    # mount comum — preservando o dono do host (o usuário do deploy). Com 600, o processo fica
+    # trancado do lado de fora da própria credencial:
+    #
+    #     Access to the path '/run/secrets/gcp_service_account' is denied.
+    #
+    # (E `uid:` no compose NÃO resolve: só funciona no Docker Swarm; num compose normal o
+    # Docker o ignora, e ainda avisa que está ignorando.)
+    #
+    # O 644 no arquivo não expõe nada A MAIS no host: para chegar até ele é preciso ENTRAR na
+    # pasta, e ela é 700 — só o dono passa. Quem quer ler o arquivo já teria de ser o dono, ou
+    # root (que lê tudo de qualquer jeito).
+    Invoke-Remote "chmod 700 '$remoteFolder/secrets' && chmod 644 '$remoteFolder/secrets/gcp-service-account.json'"
 
     Write-Ok "service account enviada ($($serviceAccount.Name) -> gcp-service-account.json, 600)"
 
