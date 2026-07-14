@@ -71,11 +71,14 @@ services:
       # curl nem wget, e instalá-los só para isto engorda o runtime e amplia a
       # superfície. O `grep` no status é o que dá DENTES ao teste: sem ele, um
       # 404 ou um 503 também "conectam" e passariam.
+      # ⚠️ O comando vai entre ASPAS. Sem elas, o YAML vê o `: ` de "Host: localhost" e tenta
+      # ler um mapeamento no meio da string — morrendo com
+      # "mapping values are not allowed in this context".
       test:
         - CMD
         - bash
         - -c
-        - exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /health/live HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && grep -q '200 OK' <&3
+        - "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /health/live HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"
       interval: 30s
       timeout: 5s
       retries: 3
