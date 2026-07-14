@@ -9,7 +9,8 @@ using Microsoft.Extensions.Options;
 namespace Garius.Api.Infrastructure.Authorization;
 
 /// <summary>
-/// Autentica pelo header <c>X-Api-Key</c>.
+/// Autentica uma <b>chave de API</b>, venha ela em <c>Authorization: Bearer gk_...</c> (o
+/// caminho recomendado, e o que o mercado usa) ou no header <c>X-Api-Key</c>.
 ///
 /// <para>
 /// Diferente do JWT (que é stateless e não custa nada validar), <b>cada request com chave de
@@ -28,15 +29,22 @@ internal sealed class ApiKeyAuthenticationHandler(
 {
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
-        if (!Request.Headers.TryGetValue(MachineAuth.ApiKeyHeader, out var values))
+        // A chave chega por `Authorization: Bearer gk_...` (o caminho recomendado, que é o que
+        // o mercado usa) ou pelo `X-Api-Key`. Quem sabe distinguir uma chave de um JWT no mesmo
+        // header é o MachineAuth — e é o MESMO código que o forwarder de esquema usa para
+        // mandar o request para cá. Ver MachineAuth.ExtractCredential.
+        var kind = MachineAuth.ExtractCredential(
+            Request.Headers.Authorization,
+            Request.Headers[MachineAuth.ApiKeyHeader],
+            out var key);
+
+        if (kind != MachineCredentialKind.ApiKey)
         {
-            // NoResult, não Fail: a ausência do header significa "este esquema não se aplica",
-            // e não "a autenticação falhou". Um Fail aqui abortaria a requisição de um usuário
-            // logado por cookie, que legitimamente não manda X-Api-Key.
+            // NoResult, não Fail: "este esquema não se aplica" — e não "a autenticação falhou".
+            // Um Fail aqui abortaria a requisição de um usuário logado por cookie, que
+            // legitimamente não manda chave nenhuma.
             return AuthenticateResult.NoResult();
         }
-
-        var key = values.ToString();
 
         if (string.IsNullOrWhiteSpace(key))
         {

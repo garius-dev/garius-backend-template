@@ -109,26 +109,30 @@ internal sealed class SecuritySchemesTransformer(string title) : IOpenApiDocumen
                 "Requisições que alteram estado também exigem o header X-CSRF-Token."
         };
 
-        // 2. Bearer — uma MÁQUINA (OAuth2 client credentials).
+        // 2. Bearer — uma MÁQUINA. Serve às DUAS credenciais: o JWT do M2M e a chave de API.
         document.Components.SecuritySchemes[MachineAuth.BearerScheme] = new OpenApiSecurityScheme
         {
             Type = SecuritySchemeType.Http,
             Scheme = "bearer",
-            BearerFormat = "JWT",
             Description =
-                "JWT de máquina. Obtenha-o em POST /auth/token, trocando client_id + " +
-                "client_secret (OAuth2 client credentials). Vida curta (1h por padrão)."
+                "Credencial de máquina. Aceita as DUAS:\n\n" +
+                "• **JWT** (`eyJ...`) — obtido em POST /auth/token, trocando client_id + " +
+                "client_secret (OAuth2 client credentials). Vida curta (1h por padrão). " +
+                "É o caminho para os SEUS sistemas.\n\n" +
+                "• **Chave de API** (`gk_...`) — criada em POST /machine/api-keys, mostrada UMA " +
+                "ÚNICA VEZ, de longa duração e com quota. É o caminho para TERCEIROS.\n\n" +
+                "O prefixo distingue uma da outra, sem ambiguidade."
         };
 
-        // 3. X-Api-Key — um TERCEIRO.
+        // 3. X-Api-Key — o header ALTERNATIVO da chave de API (o principal é o Bearer, acima).
         document.Components.SecuritySchemes[MachineAuth.ApiKeyScheme] = new OpenApiSecurityScheme
         {
             Type = SecuritySchemeType.ApiKey,
             In = ParameterLocation.Header,
             Name = MachineAuth.ApiKeyHeader,
             Description =
-                "Chave de API de longa duração, para integrações de terceiros. " +
-                "Criada em POST /machine/api-keys e mostrada UMA ÚNICA VEZ."
+                "Header alternativo da chave de API. O caminho recomendado é " +
+                "`Authorization: Bearer gk_...` — este continua aceito por compatibilidade."
         };
 
         // Os três valem para o documento inteiro, e são ALTERNATIVAS (não cumulativos).

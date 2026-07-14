@@ -176,6 +176,93 @@ public class MachineAuthTests(ApiFactory factory)
     }
 
     /// <summary>
+    /// <b>O caminho recomendado.</b> A chave de API vai em <c>Authorization: Bearer</c> — que é
+    /// o que Stripe, OpenAI e GitHub fazem, e o que todo integrador já sabe mandar sem ler
+    /// documentação nenhuma.
+    ///
+    /// <para>
+    /// O que faz isso funcionar sem ambiguidade é o prefixo <c>gk_</c>: um JWT nunca começa
+    /// assim (ele é base64url de um JSON, e sempre sai como <c>ey...</c>). Ver
+    /// <c>MachineAuth.ExtractCredential</c> — se essa distinção quebrar, a chave é entregue ao
+    /// handler de JWT, que a rejeita como token malformado, e o integrador recebe um 401 sem
+    /// explicação numa chave perfeitamente válida.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Uma_chave_de_API_autoriza_pelo_header_Authorization_Bearer()
+    {
+        var (key, _) = await SeedApiKeyAsync([Permissions.Users.Read.Value]);
+
+        var client = factory.CreateClient();
+
+        // Bearer, NÃO X-Api-Key.
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", key);
+
+        var response = await client.GetAsync("/__test/protected", TestContext.Current.CancellationToken);
+
+        response.StatusCode.ShouldBe(
+            HttpStatusCode.OK,
+            "a chave de API é aceita no Bearer — o header padrão do mercado — e o prefixo gk_ " +
+            "é o que a distingue de um JWT no mesmo header");
+    }
+
+    /// <summary>
+    /// A quota vale no Bearer também. Um caminho de entrada novo que não contabilizasse o
+    /// consumo seria um <b>bypass da quota</b>: bastaria trocar de header para ter chamadas
+    /// ilimitadas — e a quota existe justamente para que um vazamento trave e apareça.
+    /// </summary>
+    [Fact]
+    public async Task A_quota_vale_TAMBEM_quando_a_chave_vem_no_Bearer()
+    {
+        var (key, id) = await SeedApiKeyAsync([Permissions.Users.Read.Value], callLimit: 1);
+
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", key);
+
+        (await client.GetAsync("/__test/protected", TestContext.Current.CancellationToken))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        // A quota era de 1: a segunda chamada não passa.
+        (await client.GetAsync("/__test/protected", TestContext.Current.CancellationToken))
+            .StatusCode.ShouldBe(
+                HttpStatusCode.Unauthorized,
+                "o Bearer não pode ser uma porta dos fundos que ignora a quota");
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var stored = await db.ApiKeys
+            .IgnoreQueryFilters()
+            .SingleAsync(k => k.Id == id, TestContext.Current.CancellationToken);
+
+        stored.CallCount.ShouldBe(1, "a chamada que passou consumiu a quota");
+    }
+
+    /// <summary>
+    /// O outro lado da moeda: um JWT continua sendo tratado como JWT no mesmo header. Se a
+    /// distinção <c>gk_</c> vazasse para o lado errado, o M2M pararia de funcionar inteiro.
+    /// </summary>
+    [Fact]
+    public async Task Um_JWT_no_Bearer_NAO_e_confundido_com_uma_chave_de_API()
+    {
+        var (clientId, secret, _) = await SeedClientAsync([Permissions.Users.Read.Value]);
+
+        var token = await GetAccessTokenAsync(clientId, secret);
+
+        // Um JWT é base64url de um JSON que começa com `{` — ele SEMPRE sai como "ey...", e
+        // nunca pode colidir com o prefixo da chave de API. É essa disjunção que sustenta o
+        // Bearer servir às duas credenciais.
+        token.StartsWith(MachineCredential.ApiKeyPrefix, StringComparison.Ordinal).ShouldBeFalse(
+            "um JWT nunca pode colidir com o prefixo gk_ da chave de API");
+
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        (await client.GetAsync("/__test/protected", TestContext.Current.CancellationToken))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+    }
+
+    /// <summary>
     /// A diferença que justifica a existência das duas coisas: revogar uma chave de API tem
     /// efeito <b>imediato</b> (ela vai ao banco a cada request), enquanto um JWT já emitido
     /// sobrevive até expirar.

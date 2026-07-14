@@ -722,9 +722,13 @@ await fetch('/api/products', {
 });
 ```
 
-Sem o header, a API responde **403**. O cookie de sessão é `HttpOnly` — o navegador o envia sozinho, inclusive numa requisição disparada por um site malicioso. O token de CSRF é a prova de que a chamada partiu de código rodando na **mesma origem**.
+Sem o header, a API responde **403** — com o código `auth.csrf_token_invalid`, que diz **qual** é o problema. (Já disse `auth.insufficient_permission`, e mandava o desenvolvedor caçar o bug na autorização, que estava perfeita. Um erro que mente sobre a própria causa custa mais caro que o erro.)
 
 > Requisições autenticadas por `Authorization: Bearer` ou `X-Api-Key` (ver [Autenticação de máquina](#autenticação-de-máquina-m2m-e-terceiros)) dispensam CSRF: não há cookie ambiente que o navegador envie sozinho, então não há o que explorar.
+
+**`POST /auth/login` e `POST /auth/token` também dispensam** — e a razão é o que define a regra: os dois **provam uma credencial** (a senha, o `client_secret`). Quem já a tivesse não precisaria de CSRF nenhum, e o pior que um ataque conseguiria é logar a vítima na conta do próprio atacante. Exigir o token no login, aliás, o torna **impossível de chamar** para quem já tem uma sessão aberta no navegador: o POST leva o cookie da sessão anterior, o antiforgery exige um header que o cliente ainda não tem, e **relogar responde 403**.
+
+O **`/auth/refresh` não é isento**, e a distinção é o ponto todo: ele **não prova nada** — apoia-se num cookie que o navegador manda sozinho, que é exatamente a condição que o CSRF cobre. Sem o token, um site malicioso rotacionaria o refresh token da vítima e derrubaria a sessão dela.
 
 ### Permissões
 
@@ -757,15 +761,19 @@ Há **três** formas de se autenticar, e **um só** modelo de autorização:
 | Credencial | Quem usa | Como |
 |---|---|---|
 | Cookie `HttpOnly` | uma **pessoa**, no navegador | `POST /auth/login` |
-| JWT (OAuth2 *client credentials*) | um **sistema seu** | `POST /auth/token` → `Authorization: Bearer <token>` |
-| Chave de API | um **terceiro** | `X-Api-Key: <chave>` |
+| JWT (OAuth2 *client credentials*) | um **sistema seu** | `POST /auth/token` → `Authorization: Bearer eyJ...` |
+| Chave de API | um **terceiro** | `Authorization: Bearer gk_...` |
 
 As três chegam à autorização como um principal com claims de permissão. **Um endpoint declara a permissão e serve as três** — não existe um segundo vocabulário de escopos para máquina:
 
 ```csharp
 group.MapGet("/", ...).RequirePermission(Permissions.Invoices.Read);
-// vale para cookie, Bearer e X-Api-Key. O mesmo código.
+// vale para cookie, JWT e chave de API. O mesmo código.
 ```
+
+> **As duas credenciais de máquina viajam no mesmo header `Authorization: Bearer`** — que é o que o mercado faz (Stripe, OpenAI, GitHub) e o que todo integrador já sabe mandar sem ler documentação. O que as distingue **não é heurística**: uma chave de API sempre começa com `gk_`, e um JWT nunca pode (ele é base64url de um JSON, e sempre sai como `ey...`). A decisão vive num lugar só, em `MachineAuth.ExtractCredential` — o forwarder de esquema, o handler da chave e o bypass de CSRF **têm** de concordar sobre o que é o quê.
+>
+> O header `X-Api-Key` **continua aceito**, mas deixou de ser o caminho recomendado.
 
 ### M2M — client credentials
 
@@ -800,10 +808,15 @@ POST /machine/api-keys
 
 # → devolve a chave UMA ÚNICA VEZ: "gk_a1b2c3d4..."
 
-curl -H "X-Api-Key: gk_a1b2c3d4..." https://api.suaapp.com/invoices
+# O terceiro a usa como usaria a de qualquer SaaS:
+curl -H "Authorization: Bearer gk_a1b2c3d4..." https://api.suaapp.com/invoices
+
+# (o header X-Api-Key também funciona, mas não é o recomendado)
 ```
 
 O **`callLimit` é uma quota total**, não um rate limit. É o que transforma um vazamento silencioso e ilimitado num vazamento que **trava e aparece**. Uma chave estourada para de funcionar, e alguém precisa olhar para ela.
+
+Consumiu a quota? `GET /machine/api-keys` mostra o `callCount` de cada chave. Para liberar mais chamadas, o caminho é criar uma chave nova (o segredo não é recuperável) ou subir o `callLimit` da existente direto no banco — **um endpoint de "aumentar a quota" ainda não existe**, e é o próximo passo natural se você for vender acesso.
 
 ### As duas diferenças que importam
 

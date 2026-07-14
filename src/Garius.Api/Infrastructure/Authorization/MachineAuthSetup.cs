@@ -99,8 +99,16 @@ internal static class MachineAuthSetup
     }
 
     /// <summary>
-    /// Escolhe o esquema conforme o que o request <b>traz</b>: <c>Authorization: Bearer</c> →
-    /// JWT; <c>X-Api-Key</c> → chave de API; qualquer outra coisa → o cookie do usuário.
+    /// Escolhe o esquema conforme o que o request <b>traz</b>: uma chave de API (<c>gk_...</c>,
+    /// venha ela no Bearer ou no <c>X-Api-Key</c>) → <c>ApiKey</c>; um JWT no Bearer →
+    /// <c>Bearer</c>; qualquer outra coisa → o cookie do usuário.
+    ///
+    /// <para>
+    /// ⚠️ <b>Um Bearer não é necessariamente um JWT.</b> Uma chave de API também viaja nesse
+    /// header (é o padrão do mercado), e mandá-la ao handler de JWT a rejeitaria como token
+    /// malformado — um 401 sem explicação numa chave perfeitamente válida. Quem decide é o
+    /// <see cref="MachineAuth.ExtractCredential"/>, e a decisão vive lá, uma vez só.
+    /// </para>
     ///
     /// <para>
     /// Sem este forwarder, o esquema padrão (cookie) atenderia <b>tudo</b>: um request com um
@@ -113,19 +121,16 @@ internal static class MachineAuthSetup
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        if (context.Request.Headers.ContainsKey(MachineAuth.ApiKeyHeader))
+        var kind = MachineAuth.ExtractCredential(
+            context.Request.Headers.Authorization,
+            context.Request.Headers[MachineAuth.ApiKeyHeader],
+            out _);
+
+        return kind switch
         {
-            return MachineAuth.ApiKeyScheme;
-        }
-
-        var authorization = context.Request.Headers.Authorization.ToString();
-
-        if (authorization.StartsWith(
-                $"{MachineAuth.BearerScheme} ", StringComparison.OrdinalIgnoreCase))
-        {
-            return MachineAuth.BearerScheme;
-        }
-
-        return CookieAuthSetup.SchemeName;
+            MachineCredentialKind.ApiKey => MachineAuth.ApiKeyScheme,
+            MachineCredentialKind.Jwt => MachineAuth.BearerScheme,
+            _ => CookieAuthSetup.SchemeName
+        };
     }
 }
