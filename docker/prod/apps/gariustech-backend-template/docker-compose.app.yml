@@ -41,7 +41,23 @@ services:
       - DOCKER_RUN=true
       - GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/gcp_service_account
     secrets:
-      - gcp_service_account
+      # ⚠️ O uid/gid NÃO é opcional, e a sintaxe curta (`- gcp_service_account`) NÃO serve.
+      #
+      # O Docker monta o secret preservando o DONO do arquivo no host — que é o seu usuário
+      # (uid 1002). Mas o container roda como `app` (uid 1654, não-root, ver o Dockerfile), e
+      # o arquivo tem modo 600: só o dono lê. Resultado:
+      #
+      #     Access to the path '/run/secrets/gcp_service_account' is denied.
+      #
+      # ... e a aplicação morre no boot, sem conseguir abrir o Secret Manager.
+      #
+      # Declarando o uid aqui, o Docker monta o arquivo JÁ COM O DONO CERTO dentro do
+      # container — e ele continua 600 e do seu usuário no host, como deve ser.
+      - source: gcp_service_account
+        target: gcp_service_account
+        uid: "1654"     # o usuário `app` da imagem aspnet
+        gid: "1654"
+        mode: 0400      # só leitura, e só para ele
     networks:
       - garius_network
     restart: "no"   # um job, não um serviço: reiniciar sozinho seria errado.
@@ -60,7 +76,23 @@ services:
       # app NÃO SOBE — é fail-fast deliberado, não um bug.
       - GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/gcp_service_account
     secrets:
-      - gcp_service_account
+      # ⚠️ O uid/gid NÃO é opcional, e a sintaxe curta (`- gcp_service_account`) NÃO serve.
+      #
+      # O Docker monta o secret preservando o DONO do arquivo no host — que é o seu usuário
+      # (uid 1002). Mas o container roda como `app` (uid 1654, não-root, ver o Dockerfile), e
+      # o arquivo tem modo 600: só o dono lê. Resultado:
+      #
+      #     Access to the path '/run/secrets/gcp_service_account' is denied.
+      #
+      # ... e a aplicação morre no boot, sem conseguir abrir o Secret Manager.
+      #
+      # Declarando o uid aqui, o Docker monta o arquivo JÁ COM O DONO CERTO dentro do
+      # container — e ele continua 600 e do seu usuário no host, como deve ser.
+      - source: gcp_service_account
+        target: gcp_service_account
+        uid: "1654"     # o usuário `app` da imagem aspnet
+        gid: "1654"
+        mode: 0400      # só leitura, e só para ele
     healthcheck:
       # Bate em /health/live — o endpoint que EXISTE (ver HealthSetup.cs). Não é
       # /healthz: esse nunca existiu neste template, e um healthcheck apontado

@@ -109,6 +109,72 @@ public class ComposeFileTests
                 "compose falha no servidor com 'no such file'");
     }
 
+    /// <summary>
+    /// O secret precisa ser montado com o <b>uid do usuário do container</b> — senão a aplicação
+    /// não consegue ler a própria credencial.
+    ///
+    /// <para>
+    /// <b>Este teste nasceu no primeiro deploy que chegou ao servidor.</b> O container morreu com:
+    /// </para>
+    ///
+    /// <code>Access to the path '/run/secrets/gcp_service_account' is denied.</code>
+    ///
+    /// <para>
+    /// Duas decisões corretas que, juntas, se anulavam: o <c>deploy.ps1</c> grava a service
+    /// account com modo <b>600</b> (é uma credencial — com 777 qualquer usuário do servidor lê a
+    /// chave que abre a senha do banco e as chaves de criptografia); e o container roda como
+    /// <b>não-root</b> (<c>app</c>, uid 1654). O Docker monta o secret <b>preservando o dono do
+    /// host</b> — e o processo, sendo outro usuário, fica trancado do lado de fora.
+    /// </para>
+    ///
+    /// <para>
+    /// A saída não é afrouxar a permissão: é o compose declarar <b>para quem</b> montar. Assim o
+    /// arquivo continua 600 no host <b>e</b> legível dentro do container.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void O_secret_e_montado_com_o_uid_do_usuario_do_container()
+    {
+        var appDir = FindAppDirectory();
+
+        var compose = File.ReadAllText(Path.Combine(appDir, "docker-compose.app.yml"));
+        var dockerfile = File.ReadAllText(FindRepositoryFile("Dockerfile"));
+
+        // O container NÃO roda como root — é o que torna o uid necessário.
+        dockerfile.ShouldContain(
+            "USER app",
+            customMessage: "a imagem precisa rodar como não-root");
+
+        // E o compose precisa dizer ao Docker para quem montar o secret.
+        compose.ShouldContain(
+            "uid:",
+            customMessage:
+                """
+                O compose monta o secret sem declarar o uid.
+
+                O Docker preserva o dono do arquivo no host (o seu usuário), mas o container roda
+                como `app` (uid 1654, não-root) — e o arquivo é 600. A aplicação morre no boot com:
+
+                    Access to the path '/run/secrets/gcp_service_account' is denied.
+
+                Use a sintaxe longa, com `uid: "1654"`.
+                """);
+    }
+
+    private static string FindRepositoryFile(string fileName)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, fileName)))
+        {
+            directory = directory.Parent;
+        }
+
+        Assert.NotNull(directory);
+
+        return Path.Combine(directory.FullName, fileName);
+    }
+
     private static string FindDeployScript()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
