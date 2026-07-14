@@ -123,7 +123,22 @@ O `dotnet new` já apontou a sua app para o secret **dela** (`tcm-sfchortolandia
 }
 ```
 
-> **O secret guarda só SENHAS e CHAVES — e é o mesmo em dev e em produção.** O que muda de ambiente é o `appsettings`: os endereços locais (`localhost`) estão no `appsettings.Development.json`, e os de produção (nomes dos containers, rede do Traefik, CORS) no `appsettings.Production.json`. Endereço não é segredo, e por isso não vai para o Secret Manager.
+E, **só em produção**, os endereços — no mesmo secret:
+
+```json
+{
+  "Database:Host": "postgres-prod",
+  "Redis:ConnectionString": "redis-prod:6379",
+  "Security:TrustedProxies:0": "172.18.0.0/16",
+  "Cors:AllowedOrigins:0": "https://app.suaapp.com"
+}
+```
+
+> **Em desenvolvimento você não configura nada disso.** A infra local é sempre a mesma (`localhost`), e já está no `appsettings.Development.json` — é `dotnet run` e pronto.
+>
+> Em produção eles mudam por **servidor**, e por isso vêm de fora. `Database:Host` e `Redis:ConnectionString` são o **nome do container** na rede Docker — nunca `localhost`: dentro de um container, `localhost` é o *próprio* container.
+>
+> A aplicação **não sobe** sem eles — falha fechada, e o log diz qual falta.
 
 
 > **`Bootstrap:*` é o que resolve o ovo e a galinha.** Sem elas, a aplicação sobe **fechada** — a `FallbackPolicy` exige autenticação em tudo, o `/scalar` exige `docs.read`, o `/jobs` exige `jobs.read` — e não existe **nenhum usuário** para conceder permissão a ninguém. Nem para entrar e criar o primeiro.
@@ -189,7 +204,7 @@ Aponte para ele em `appsettings.Development.json` e `appsettings.Production.json
 - **`TrustedProxies` é obrigatório em produção** — é a rede Docker do Traefik. Sem ele **a aplicação não sobe** (falha explícita e proposital — veja o porquê logo abaixo).
 - **`AllowedOrigins` vazio nega tudo.** Se houver frontend, declare a origem.
 
-> Depois disso, o deploy é só: `./deploy.ps1 -Push`, subir o `APP_VER` no `.env` do servidor, e `docker compose up -d`. O `.env` tem **cinco linhas** e não cresce.
+> Depois disso, o deploy é **um comando**: `./deploy.ps1 v1.2.0` — testa, builda, publica e sobe no servidor. O `.env` tem **cinco linhas** e não cresce.
 
 #### `Security:TrustedProxies` — o que é, e por que não pode ficar vazio
 
@@ -1087,23 +1102,34 @@ A imagem roda como **não-root** (usuário `app`, uid 1654) e escuta na **8080**
 
 > ⚠️ O `Dockerfile` copia o **`.editorconfig`** antes de compilar, e isso não é decoração. É ele que calibra os analisadores, e aqui *warning é erro*. Sem ele o build passa liso na sua máquina e **quebra dentro do container** (CA1000, CA1711, CA1716…) — o pior tipo de erro, o que só aparece no deploy.
 
-### O que subir, e como
+### O deploy — um comando, do código ao ar
 
 ```powershell
-./deploy.ps1            # clean + build + testes + imagem local
-./deploy.ps1 -Push      # ... e publica no Docker Hub
+./deploy.ps1 v1.2.0
 ```
 
-O script roda a suíte **antes** de empacotar (publicar uma imagem que não passa nos testes é publicar um deploy que vai falhar no servidor, onde é caro descobrir) e **recusa republicar uma tag que já existe** — senão o servidor faz `pull` e recebe um binário *diferente* com o mesmo número de versão.
+Isso faz **tudo**, e para no primeiro erro:
 
-No servidor, em `docker/prod/apps/<sua-app>/`:
+1. grava `APP_VER=v1.2.0` no `.env`;
+2. `dotnet clean && build && test` — a suíte inteira, com Postgres e Redis reais;
+3. `docker build` e `docker push`;
+4. envia o `docker-compose.app.yml`, o `.env` e a service account para o servidor (SFTP, conferindo o hash de cada arquivo);
+5. `docker compose pull && up -d` lá — as migrations rodam primeiro, e a API só sobe se elas passarem.
 
-```bash
-cp .env.example .env                                  # e preencha (APP_VER, APP_HOST…)
-cp <service-account>.json secrets/gcp-service-account.json
-docker compose -f docker-compose.app.yml pull
-docker compose -f docker-compose.app.yml up -d
+Variações:
+
+```powershell
+./deploy.ps1 v1.2.0 -NoDeploy   # publica no Docker Hub e para (não toca no servidor)
+./deploy.ps1 -Local             # só a imagem local, para conferir
 ```
+
+**Configuração, uma vez por servidor** (não por aplicação): copie `docker/server.env.example` para `docker/server.env` e preencha `SSH_HOST`, `SSH_USER`, `SSH_PASSWORD` e `REMOTE_ROOT`. Ele **não vai para o git** — guarda a senha.
+
+> **Passar a versão como argumento não é conveniência: é o que evita o erro mais caro do deploy.** Subir o `APP_VER` é o passo mais fácil de esquecer, e o esquecimento é *silencioso* — o servidor faz `pull` de uma tag que já tem em cache e sobe o binário **antigo**, sem erro nenhum. Aqui o `.env` local é o **mesmo** que vai para o servidor, então os dois nunca divergem.
+
+> O script **recusa republicar uma tag que já existe** no Docker Hub — senão o servidor receberia um binário *diferente* com o mesmo número de versão, e a partir daí nada mais bate com nada quando você for investigar um bug.
+
+> A service account vai com permissão **600** (e a pasta `secrets/`, **700**). É uma credencial: com `777`, qualquer usuário do servidor lê a chave que abre a senha do banco, as chaves de criptografia e a do JWT.
 
 O compose **não sobe infraestrutura**: ele assume Traefik, Postgres, Redis e Loki já rodando na rede `garius_network` (externa). O único segredo que vive no servidor é o JSON da service account — é ele que destrava o Google Secret Manager, de onde vêm senha do banco, chaves de criptografia e a do JWT.
 

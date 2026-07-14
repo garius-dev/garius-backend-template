@@ -1,41 +1,57 @@
 <#
 .SYNOPSIS
-    Build, testa e publica a imagem da API no Docker Hub.
+    Do código ao ar, num comando: testa, builda, publica e sobe no servidor.
 
 .DESCRIPTION
-    Um comando em vez de uma sequência decorada. O script:
+    Substitui a sequência decorada (buildar, empurrar, entrar por SSH, editar o .env,
+    `pull`, `up -d`) por uma linha:
 
-      1. lê PROJECT_NAME / DOCKER_HUB_PROFILE / APP_VER do .env do ambiente;
-      2. roda `dotnet clean && build && test` ANTES de empacotar;
-      3. builda a imagem e a publica com a tag do APP_VER.
+        ./deploy.ps1 v1.2.0
 
-    O passo (2) não é opcional e não é cerimônia: publicar uma imagem que não
-    passa nos testes é publicar um deploy que vai falhar no servidor, onde é caro
-    descobrir. Use -SkipTests só quando souber exatamente por quê.
+    O que ele faz, em ordem — e para no primeiro erro:
 
-    A imagem é UMA só: o mesmo binário roda a API e as migrations (quem decide é
-    a env var MIGRATE_ONLY). Não há tag `-migration`.
+      1. sobe o APP_VER no .env (local);
+      2. `dotnet clean && build && test` — a suíte inteira, com Postgres e Redis reais;
+      3. `docker build` e `docker push`;
+      4. envia o compose, o .env e a service account para o servidor (SFTP, com
+         verificação de hash em cada arquivo);
+      5. `docker compose up -d` no servidor.
+
+    Publicar uma imagem que não passa nos testes é publicar um deploy que vai falhar no
+    servidor, onde é caro descobrir. Por isso o passo 2 não é opcional (o -SkipTests
+    existe, mas ele avisa).
+
+.PARAMETER Version
+    A versão desta release (ex.: v1.2.0). Grava no .env e vira a tag da imagem.
+    Omita para reusar o APP_VER que já está lá.
 
 .PARAMETER Environment
     Qual pasta de docker/<env>/apps/<app> usar. Padrão: prod.
 
 .PARAMETER SkipTests
-    Pula a suíte. Os testes sobem Postgres e Redis via Testcontainers e levam
-    ~1min30 — mas são eles que garantem que a imagem publicada presta.
+    Pula a suíte. Ela leva ~1min30 (sobe Postgres e Redis via Testcontainers) — e é ela
+    que garante que a imagem publicada presta.
 
-.PARAMETER Push
-    Publica no Docker Hub. Sem isto, a imagem fica só na máquina local.
+.PARAMETER NoDeploy
+    Publica no Docker Hub e PARA. Não toca no servidor.
+
+.PARAMETER Local
+    Só builda a imagem, aqui. Não publica, não faz deploy.
 
 .EXAMPLE
-    ./deploy.ps1                    # build + testes + imagem local
-    ./deploy.ps1 -Push              # ... e publica no Docker Hub
-    ./deploy.ps1 -Push -SkipTests   # publica sem testar (você por sua conta)
+    ./deploy.ps1 v1.2.0             # testa, builda, publica e sobe no servidor
+    ./deploy.ps1 v1.2.0 -NoDeploy   # ... e para no Docker Hub
+    ./deploy.ps1 -Local             # só a imagem local, para conferir
 #>
 [CmdletBinding()]
 param(
+    [Parameter(Position = 0)]
+    [string] $Version,
+
     [string] $Environment = 'prod',
     [switch] $SkipTests,
-    [switch] $Push
+    [switch] $NoDeploy,
+    [switch] $Local
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,13 +61,13 @@ function Write-Step($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
 function Write-Ok($msg)   { Write-Host "  OK  $msg" -ForegroundColor Green }
 function Die($msg)        { Write-Host "`nFALHOU: $msg" -ForegroundColor Red; exit 1 }
 
-# --- 1. Descobrir a app e ler o .env ----------------------------------------
+# --- 1. Descobrir a app e ler as configurações -------------------------------
 $appsDir = Join-Path $root "docker/$Environment/apps"
 if (-not (Test-Path $appsDir)) { Die "Não existe $appsDir." }
 
 $appDirs = @(Get-ChildItem $appsDir -Directory)
 if ($appDirs.Count -ne 1) {
-    Die "Esperava exatamente 1 app em $appsDir, achei $($appDirs.Count). Ajuste o script se você mantém mais de uma."
+    Die "Esperava exatamente 1 app em $appsDir, achei $($appDirs.Count)."
 }
 $appDir = $appDirs[0].FullName
 
@@ -60,12 +76,35 @@ if (-not (Test-Path $envFile)) {
     Die "Não achei o .env em $appDir.`n       Copie o .env.example para .env e preencha."
 }
 
-# Lê o .env em um hashtable (ignora comentários e linhas vazias).
-$cfg = @{}
-foreach ($line in Get-Content $envFile) {
-    if ($line -match '^\s*#' -or $line -notmatch '=') { continue }
-    $k, $v = $line -split '=', 2
-    $cfg[$k.Trim()] = $v.Trim()
+function Read-KeyValueFile($path) {
+    $result = @{}
+
+    foreach ($line in Get-Content $path) {
+        if ($line -match '^\s*#' -or $line -notmatch '=') { continue }
+
+        $key, $value = $line -split '=', 2
+        $result[$key.Trim()] = $value.Trim()
+    }
+
+    return $result
+}
+
+$cfg = Read-KeyValueFile $envFile
+
+# --- 2. A versão --------------------------------------------------------------
+# Subir o APP_VER é o passo mais fácil de esquecer, e o esquecimento é silencioso: o
+# servidor faz `pull` de uma tag que já tem em cache e sobe o binário ANTIGO, sem erro
+# nenhum. Passar a versão como argumento faz o script gravá-la — e o .env local e o do
+# servidor nunca mais divergem (é o MESMO arquivo: ele é enviado junto).
+if ($Version) {
+    if ($Version -notmatch '^v?\d+\.\d+\.\d+') {
+        Die "Versão '$Version' não parece uma versão (esperado: v1.2.3)."
+    }
+
+    (Get-Content $envFile) -replace '^APP_VER=.*', "APP_VER=$Version" | Set-Content $envFile -Encoding UTF8
+    $cfg['APP_VER'] = $Version
+
+    Write-Ok "APP_VER=$Version gravado no .env"
 }
 
 foreach ($key in 'PROJECT_NAME', 'DOCKER_HUB_PROFILE', 'APP_VER') {
@@ -73,25 +112,26 @@ foreach ($key in 'PROJECT_NAME', 'DOCKER_HUB_PROFILE', 'APP_VER') {
 }
 
 $image = "$($cfg['DOCKER_HUB_PROFILE'])/$($cfg['PROJECT_NAME']):$($cfg['APP_VER'])"
-Write-Step "Publicando $image"
 
-# Guarda contra o deploy mais fácil de errar: republicar por cima de uma tag que
-# já está no ar. O servidor faz `pull` e recebe um binário DIFERENTE com o mesmo
-# número de versão — e aí nada bate com nada.
-if ($Push) {
-    $exists = docker manifest inspect $image 2>$null
+Write-Step "Deploy de $image"
+
+# Guarda contra o erro mais caro: republicar uma tag que já está no ar. O servidor faria
+# `pull` e receberia um binário DIFERENTE com o mesmo número de versão — e a partir daí
+# nada mais bate com nada quando você for investigar um bug.
+if (-not $Local) {
+    docker manifest inspect $image 2>$null | Out-Null
+
     if ($LASTEXITCODE -eq 0) {
-        Die "A tag $($cfg['APP_VER']) JÁ EXISTE no Docker Hub.`n       Suba o APP_VER no .env. Republicar por cima faz o servidor rodar um binário diferente com o mesmo número."
+        Die "A tag $($cfg['APP_VER']) JÁ EXISTE no Docker Hub.`n       Suba a versão: ./deploy.ps1 v<nova>"
     }
 }
 
-# --- 2. Testes ---------------------------------------------------------------
+# --- 3. Testes ---------------------------------------------------------------
 if (-not $SkipTests) {
     Write-Step 'Testes (Postgres e Redis reais, via Testcontainers)'
 
-    # O `clean` não é decoração: um build incremental ESCONDE falhas de estado
-    # global — foi assim que uma corrida entre containers de teste ficou latente
-    # por uma fase inteira.
+    # O `clean` não é cerimônia: um build incremental ESCONDE falhas de estado global —
+    # foi assim que uma corrida entre containers de teste ficou latente por uma fase inteira.
     dotnet clean --verbosity quiet
     if ($LASTEXITCODE -ne 0) { Die 'dotnet clean falhou.' }
 
@@ -106,30 +146,152 @@ if (-not $SkipTests) {
     Write-Host "`n  AVISO: testes PULADOS (-SkipTests)." -ForegroundColor Yellow
 }
 
-# --- 3. Imagem ---------------------------------------------------------------
+# --- 4. Imagem ---------------------------------------------------------------
 Write-Step 'Build da imagem'
+
 docker build -t $image $root
 if ($LASTEXITCODE -ne 0) { Die 'docker build falhou.' }
+
 Write-Ok $image
 
-# --- 4. Push -----------------------------------------------------------------
-if ($Push) {
-    Write-Step 'Push para o Docker Hub'
-    docker push $image
-    if ($LASTEXITCODE -ne 0) { Die 'docker push falhou. Você fez `docker login`?' }
-    Write-Ok 'Publicada.'
+if ($Local) {
+    Write-Host "`nImagem local criada. Sem push, sem deploy (-Local)." -ForegroundColor Gray
+    exit 0
+}
 
+# --- 5. Push -----------------------------------------------------------------
+Write-Step 'Push para o Docker Hub'
+
+docker push $image
+if ($LASTEXITCODE -ne 0) { Die 'docker push falhou. Você fez `docker login`?' }
+
+Write-Ok 'Publicada.'
+
+if ($NoDeploy) {
+    Write-Host "`nPublicada. Sem deploy (-NoDeploy)." -ForegroundColor Gray
+    exit 0
+}
+
+# --- 6. Deploy no servidor ----------------------------------------------------
+$serverFile = Join-Path $root 'docker/server.env'
+
+if (-not (Test-Path $serverFile)) {
     Write-Host @"
 
-No servidor, para subir esta versão:
+Imagem publicada, mas NÃO houve deploy: falta o docker/server.env.
 
-    cd docker/$Environment/apps/$(Split-Path $appDir -Leaf)
-    # ajuste APP_VER=$($cfg['APP_VER']) no .env de lá
+Crie-o (a partir do server.env.example) com o endereço do servidor e a pasta de destino.
+Ele NÃO vai para o git — guarda a senha.
+
+Ou suba à mão, no servidor:
+    cd <pasta da app>
     docker compose -f docker-compose.app.yml pull
     docker compose -f docker-compose.app.yml up -d
+"@ -ForegroundColor Yellow
 
-As migrations rodam sozinhas, antes da API. Se elas falharem, a API NÃO sobe.
-"@ -ForegroundColor Gray
-} else {
-    Write-Host "`nImagem local criada. Use -Push para publicar." -ForegroundColor Gray
+    exit 0
+}
+
+$server = Read-KeyValueFile $serverFile
+
+foreach ($key in 'SSH_HOST', 'SSH_USER', 'SSH_PASSWORD', 'REMOTE_ROOT') {
+    if (-not $server[$key]) { Die "$key não está definido em docker/server.env." }
+}
+
+$remoteFolder = "$($server['REMOTE_ROOT'].TrimEnd('/'))/$($cfg['PROJECT_NAME'])"
+
+Write-Step "Deploy em $($server['SSH_HOST']):$remoteFolder"
+
+# O `plink`/`pscp` não são garantidos no Windows; o OpenSSH é (vem com o sistema desde o
+# Windows 10). Mas ele não aceita senha por argumento — de propósito. Então usamos o
+# módulo Posh-SSH, que fala SSH e SFTP com senha, e é instalável sem admin.
+if (-not (Get-Module -ListAvailable -Name Posh-SSH)) {
+    Write-Host '  Instalando o módulo Posh-SSH (uma vez só)...' -ForegroundColor Gray
+
+    Install-Module Posh-SSH -Scope CurrentUser -Force -AllowClobber
+}
+
+Import-Module Posh-SSH
+
+$securePassword = ConvertTo-SecureString $server['SSH_PASSWORD'] -AsPlainText -Force
+$credential = New-Object System.Management.Automation.PSCredential($server['SSH_USER'], $securePassword)
+
+$ssh = New-SSHSession -ComputerName $server['SSH_HOST'] -Credential $credential -AcceptKey -ErrorAction Stop
+$sftp = New-SFTPSession -ComputerName $server['SSH_HOST'] -Credential $credential -AcceptKey -ErrorAction Stop
+
+try {
+    function Invoke-Remote($command) {
+        $result = Invoke-SSHCommand -SessionId $ssh.SessionId -Command $command
+
+        if ($result.ExitStatus -ne 0) {
+            Die "Falhou no servidor: $command`n       $($result.Error)"
+        }
+
+        return $result.Output
+    }
+
+    # Limpa o que vai ser reescrito. O `secrets/` some junto: um arquivo órfão ali (uma
+    # service account de outra app, uma chave antiga) é exatamente o tipo de coisa que
+    # ninguém percebe e que continua sendo montada no container.
+    Invoke-Remote "mkdir -p '$remoteFolder' && rm -f '$remoteFolder/docker-compose.app.yml' '$remoteFolder/.env' && rm -rf '$remoteFolder/secrets'"
+
+    # Envia o compose e o .env — o MESMO .env daqui, com a versão que acabamos de publicar.
+    # É isto que garante que o servidor nunca fica numa versão diferente da que você buildou.
+    foreach ($file in 'docker-compose.app.yml', '.env') {
+        $localFile = Join-Path $appDir $file
+
+        Set-SFTPItem -SessionId $sftp.SessionId -Path $localFile -Destination $remoteFolder -Force
+
+        # Verifica o hash. Um upload truncado produz um compose que "quase" funciona — e um
+        # erro de YAML às 2h da manhã não é como você quer descobrir isso.
+        $localHash = (Get-FileHash $localFile -Algorithm SHA256).Hash.ToLowerInvariant()
+        $remoteHash = (Invoke-Remote "sha256sum '$remoteFolder/$file' | cut -d' ' -f1").Trim()
+
+        if ($localHash -ne $remoteHash) {
+            Die "O arquivo $file chegou corrompido ao servidor (hash não bate)."
+        }
+
+        Write-Ok "$file enviado"
+    }
+
+    # A service account: a credencial que destrava o Secret Manager.
+    $secretsDir = Join-Path $appDir 'secrets'
+    $serviceAccount = Get-ChildItem $secretsDir -Filter '*.json' -ErrorAction SilentlyContinue | Select-Object -First 1
+
+    if (-not $serviceAccount) {
+        Die "Não achei a service account em $secretsDir.`n       Sem ela a aplicação não sobe (é o que destrava o Secret Manager)."
+    }
+
+    Invoke-Remote "mkdir -p '$remoteFolder/secrets'"
+    Set-SFTPItem -SessionId $sftp.SessionId -Path $serviceAccount.FullName -Destination "$remoteFolder/secrets" -Force
+
+    # 600, não 777: é uma CREDENCIAL. Com 777, qualquer usuário do servidor lê a chave que
+    # abre todos os segredos da aplicação — senha do banco, chaves de criptografia, JWT.
+    Invoke-Remote "chmod 700 '$remoteFolder/secrets' && chmod 600 '$remoteFolder/secrets/'*.json"
+
+    Write-Ok 'service account enviada (600)'
+
+    # Sobe. O `pull` traz a imagem nova; o `up -d` recria o que mudou.
+    #
+    # As migrations rodam primeiro, sozinhas, e a API só sobe se elas passarem
+    # (depends_on: service_completed_successfully). Se elas falharem, o deploy para aqui —
+    # que é exatamente o que se quer.
+    Write-Step 'Subindo (migrations, depois a API)'
+
+    $up = Invoke-SSHCommand -SessionId $ssh.SessionId -Command "cd '$remoteFolder' && docker compose -f docker-compose.app.yml pull && docker compose -f docker-compose.app.yml up -d" -TimeOut 600
+
+    Write-Host $up.Output
+
+    if ($up.ExitStatus -ne 0) {
+        Die "O compose falhou no servidor:`n$($up.Error)"
+    }
+
+    Write-Ok 'No ar.'
+
+    Write-Host "`n  $image" -ForegroundColor Green
+    Write-Host "  https://$($cfg['APP_HOST'])" -ForegroundColor Green
+}
+finally {
+    if ($ssh)  { Remove-SSHSession  -SessionId $ssh.SessionId  | Out-Null }
+    if ($sftp) { Remove-SFTPSession -SessionId $sftp.SessionId | Out-Null }
 }

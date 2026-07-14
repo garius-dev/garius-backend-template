@@ -50,6 +50,11 @@ coverage*.xml
 appsettings.secrets.json
 appsettings.*.local.json
 
+# O servidor de deploy — guarda a SENHA do SSH.
+# (Não casa com o `.env` acima: o nome não COMEÇA com ponto.)
+server.env
+!server.env.example
+
 # Chaves e certificados
 *.pem
 *.key
