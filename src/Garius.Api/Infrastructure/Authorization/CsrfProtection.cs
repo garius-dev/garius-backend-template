@@ -1,6 +1,9 @@
+using Garius.Api.Infrastructure.Errors;
 using Garius.Core.Machine;
+using Garius.Core.Results;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Mvc;
 
 namespace Garius.Api.Infrastructure.Authorization;
 
@@ -161,7 +164,18 @@ internal static class CsrfProtection
                         context.Request.Method,
                         context.Request.Path);
 
-                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    // Escreve o PRÓPRIO ProblemDetails, com um código que diz a verdade.
+                    //
+                    // ⚠️ Antes, aqui só se punha o status 403 e se retornava. O corpo ficava
+                    // vazio — e o AuthProblemDetailsMiddleware, que converte todo 401/403 sem
+                    // corpo em ProblemDetails, o rotulava "auth.insufficient_permission":
+                    // "Você não tem permissão para acessar este recurso."
+                    //
+                    // Uma falha de CSRF NÃO É falta de permissão, e a mensagem mandava o
+                    // desenvolvedor caçar o bug no lugar errado — revisar permissões de um
+                    // usuário que já tinha todas elas. Um erro que mente sobre a própria causa
+                    // custa mais caro que o erro em si.
+                    await WriteCsrfProblemAsync(context);
 
                     return;
                 }
@@ -171,6 +185,61 @@ internal static class CsrfProtection
         });
     }
 
+    /// <summary>
+    /// Endpoints que <b>criam</b> a credencial, e por isso não podem exigir o token de CSRF.
+    ///
+    /// <para>
+    /// ⚠️ Sem esta exceção, <c>/auth/login</c> fica <b>impossível de chamar</b> para quem já tem
+    /// um cookie de sessão no navegador: o login é um POST, o cookie de sessão está lá, o
+    /// antiforgery exige um header que o cliente ainda não tem motivo nenhum de mandar — e o
+    /// login responde <b>403</b>. Pior: o <c>AuthProblemDetailsMiddleware</c> traduzia esse 403
+    /// em "auth.insufficient_permission", e o erro passava a <b>acusar falta de permissão num
+    /// endpoint anônimo</b>. Foi assim que este bug apareceu — um superadmin com a permissão
+    /// <c>*</c> levando 403 ao tentar relogar, procurando o defeito na autorização, que estava
+    /// perfeita.
+    /// </para>
+    ///
+    /// <para>
+    /// E não há o que um CSRF explore aqui: quem chama <c>/auth/login</c> tem de <b>provar a
+    /// senha</b>, e quem chama <c>/auth/token</c> tem de <b>provar o client_secret</b>. Um
+    /// atacante que já tivesse essas coisas não precisaria de CSRF nenhum. O pior que um CSRF
+    /// contra o login consegue é logar a vítima <i>na conta do próprio atacante</i>.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>O <c>/auth/refresh</c> NÃO entra nesta lista</b>, e a distinção é o ponto todo: o
+    /// refresh <b>não prova nada</b> — ele se apoia num cookie que o navegador manda sozinho,
+    /// que é exatamente a condição que o CSRF existe para cobrir. Um site malicioso não
+    /// conseguiria <i>ler</i> a resposta (same-origin policy), mas conseguiria <b>rotacionar o
+    /// token da vítima</b> — e, com a detecção de reuso ligada, derrubar a sessão dela. O
+    /// <c>/logout</c> fica de fora pela mesma razão.
+    /// </para>
+    /// </summary>
+    private static readonly string[] CredentialEstablishingPaths =
+    [
+        "/auth/login",
+        "/auth/token",
+    ];
+
+    /// <summary>
+    /// O 403 do CSRF, em ProblemDetails — o mesmo contrato de todo erro da API, com um
+    /// <c>code</c> que identifica a causa real.
+    /// </summary>
+    private static async Task WriteCsrfProblemAsync(HttpContext context)
+    {
+        var error = Error.Forbidden(
+            "auth.csrf_token_invalid",
+            $"Token de CSRF ausente ou inválido. Envie o valor do cookie " +
+            $"'{RequestTokenCookieName}' no header '{HeaderName}'.");
+
+        var problem = ProblemDetailsFactory.Create(error, context);
+
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        context.Response.ContentType = "application/problem+json";
+
+        await context.Response.WriteAsJsonAsync<ProblemDetails>(problem);
+    }
+
     private static bool RequiresCsrfValidation(HttpContext context)
     {
         // GET/HEAD/OPTIONS/TRACE não alteram estado.
@@ -178,6 +247,15 @@ internal static class CsrfProtection
             || HttpMethods.IsHead(context.Request.Method)
             || HttpMethods.IsOptions(context.Request.Method)
             || HttpMethods.IsTrace(context.Request.Method))
+        {
+            return false;
+        }
+
+        // Os endpoints que CRIAM a credencial, e onde se prova senha ou segredo.
+        // Ver CredentialEstablishingPaths — e note que o /auth/refresh NÃO está lá.
+        if (CredentialEstablishingPaths.Any(
+                path => context.Request.Path.StartsWithSegments(
+                    path, StringComparison.OrdinalIgnoreCase)))
         {
             return false;
         }

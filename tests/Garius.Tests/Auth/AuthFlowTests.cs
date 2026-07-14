@@ -170,10 +170,103 @@ public class AuthFlowTests(ApiFactory factory)
     }
 
     /// <summary>
+    /// <b>Relogar com uma sessão já aberta.</b> É o caso mais banal que existe — o usuário deixa
+    /// a aba aberta, volta e faz login de novo — e ele estava <b>quebrado</b>.
+    ///
+    /// <para>
+    /// O <c>/auth/login</c> é <c>AllowAnonymous</c>, mas é um POST, e o navegador reenviava o
+    /// cookie de sessão da vez anterior. O CSRF via cookie + POST e exigia o header
+    /// <c>X-CSRF-Token</c> — que um cliente prestes a fazer login não tem por que mandar. O
+    /// login respondia <b>403</b>, e o corpo do erro dizia
+    /// <c>auth.insufficient_permission</c>: "Você não tem permissão para acessar este recurso."
+    /// </para>
+    ///
+    /// <para>
+    /// O erro <b>mentia sobre a própria causa</b>. Foi encontrado por um superadmin com a
+    /// permissão <c>*</c> — que tem todas as permissões que existem — levando um 403 de falta
+    /// de permissão. Ver <c>CsrfProtection.CredentialEstablishingPaths</c>.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Relogar_com_uma_sessao_ja_aberta_FUNCIONA()
+    {
+        var email = await SeedUserAsync(tenantCount: 1);
+
+        // Como um navegador: guarda o cookie do primeiro login e o reenvia no segundo.
+        var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            HandleCookies = true
+        });
+
+        var first = await client.PostAsJsonAsync(
+            "/auth/login", new { email, password = Password }, TestContext.Current.CancellationToken);
+
+        first.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        // O SEGUNDO login, agora com o cookie de sessão viajando junto — e SEM o header de
+        // CSRF, porque um cliente que vai fazer login não tem motivo de mandá-lo.
+        var second = await client.PostAsJsonAsync(
+            "/auth/login", new { email, password = Password }, TestContext.Current.CancellationToken);
+
+        second.StatusCode.ShouldBe(
+            HttpStatusCode.OK,
+            "o login PROVA a senha — não há CSRF que o explore, e exigir o token aqui torna o " +
+            "endpoint impossível de chamar para quem já tem uma sessão aberta");
+    }
+
+    /// <summary>
+    /// Quando o CSRF <b>de fato</b> barra alguém, o erro tem de dizer <b>que foi o CSRF</b>.
+    ///
+    /// <para>
+    /// Antes, o middleware punha o status 403 e devolvia corpo vazio; o
+    /// <c>AuthProblemDetailsMiddleware</c>, que converte todo 401/403 sem corpo em
+    /// ProblemDetails, o rotulava como <c>auth.insufficient_permission</c>. Um erro que aponta
+    /// para a causa errada manda o desenvolvedor caçar o bug no lugar errado — e custa mais
+    /// caro que o bug.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Uma_falha_de_CSRF_diz_que_e_CSRF_e_nao_falta_de_permissao()
+    {
+        var email = await SeedUserAsync(tenantCount: 1);
+
+        var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            HandleCookies = true
+        });
+
+        await client.PostAsJsonAsync(
+            "/auth/login", new { email, password = Password }, TestContext.Current.CancellationToken);
+
+        // POST com cookie de sessão e sem o header — uma falha de CSRF genuína.
+        var response = await client.PostAsync("/auth/refresh", null, TestContext.Current.CancellationToken);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(
+            TestContext.Current.CancellationToken);
+
+        body.GetProperty("code").GetString().ShouldBe(
+            "auth.csrf_token_invalid",
+            "o erro precisa apontar para a causa REAL — dizer 'falta de permissão' a quem tem " +
+            "todas as permissões é o pior tipo de mensagem de erro que existe");
+
+        // E continua respeitando o contrato de erro da API.
+        body.GetProperty("traceId").GetString().ShouldNotBeNullOrEmpty();
+    }
+
+    /// <summary>
     /// A proteção de CSRF, provada: um POST com o cookie de sessão mas <b>sem</b> o header é
     /// rejeitado. É exatamente o que um site malicioso conseguiria montar — o navegador envia
     /// o cookie sozinho, mas a same-origin policy o impede de <i>ler</i> o valor para montar o
     /// header.
+    ///
+    /// <para>
+    /// ⚠️ Usa o <c>/auth/refresh</c>, e isso <b>importa</b>: o refresh não prova senha nenhuma —
+    /// ele se apoia num cookie que o navegador manda sozinho. Isentá-lo do CSRF (como o
+    /// <c>/auth/login</c> é isento) deixaria um site malicioso rotacionar o token da vítima e
+    /// derrubar a sessão dela. Ver <c>CsrfProtection.CredentialEstablishingPaths</c>.
+    /// </para>
     /// </summary>
     [Fact]
     public async Task Um_POST_com_cookie_mas_SEM_token_de_CSRF_e_rejeitado()
