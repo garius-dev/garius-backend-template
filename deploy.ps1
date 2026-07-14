@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Do código ao ar, num comando: testa, builda, publica e sobe no servidor.
 
@@ -39,9 +39,19 @@
     Só builda a imagem, aqui. Não publica, não faz deploy.
 
 .EXAMPLE
-    ./deploy.ps1 v1.2.0             # testa, builda, publica e sobe no servidor
-    ./deploy.ps1 v1.2.0 -NoDeploy   # ... e para no Docker Hub
-    ./deploy.ps1 -Local             # só a imagem local, para conferir
+    .\deploy.ps1 v1.2.0             # testa, builda, publica e sobe no servidor
+    .\deploy.ps1 v1.2.0 -NoDeploy   # ... e para no Docker Hub
+    .\deploy.ps1 -Local             # só a imagem local, para conferir
+
+.NOTES
+    ⚠️ ESTE ARQUIVO PRECISA SER SALVO EM UTF-8 **COM BOM**.
+
+    O PowerShell 5.1 (o que vem no Windows) assume ANSI num .ps1 sem BOM: os acentos viram
+    bytes lixo, e o parser morre com um erro que não tem NADA a ver com a causa —
+    "Missing closing '}'", apontando para uma linha aleatória. O PowerShell 7 lê UTF-8 por
+    padrão, então o problema é invisível para quem só testa nele.
+
+    Há um teste que trava isso: DeployScriptTests.
 #>
 [CmdletBinding()]
 param(
