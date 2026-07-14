@@ -52,12 +52,22 @@ public static class PersistenceExtensions
     /// strings — para que o health check use exatamente a mesma string do DbContext.
     /// </para>
     /// </summary>
+    /// <param name="services">O contêiner.</param>
+    /// <param name="configuration">A configuração.</param>
+    /// <param name="environment">O ambiente (para o DockerAwareHost).</param>
+    /// <param name="applicationAssembly">O assembly das migrations.</param>
+    /// <param name="migrateOnly">Modo bootstrap.</param>
+    /// <param name="onHostResolved">
+    /// Avisa quando o host do secret é trocado por <c>localhost</c> (dev fora do Docker). O
+    /// <c>Program</c> o liga ao log — esta camada não conhece o logger. Ver DockerAwareHost.
+    /// </param>
     public static DatabaseNaming AddPersistence(
         this IServiceCollection services,
         IConfiguration configuration,
         IHostEnvironment environment,
         Assembly applicationAssembly,
-        bool migrateOnly)
+        bool migrateOnly,
+        Action<string, string, string>? onHostResolved = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
@@ -76,7 +86,11 @@ public static class PersistenceExtensions
         // O secret guarda o host de PRODUÇÃO (o nome do container). Rodando na máquina, fora do
         // Docker, ele vira `localhost` — é o que permite UM secret só, sem duas cópias para manter
         // em sincronia. Ver DockerAwareHost.
-        options.Host = DockerAwareHost.Resolve(options.Host, configuration, environment);
+        options.Host = DockerAwareHost.Resolve(
+            options.Host,
+            configuration,
+            environment,
+            onResolved: onHostResolved);
 
         services.AddSingleton(options);
 

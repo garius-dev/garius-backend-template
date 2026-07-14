@@ -54,21 +54,48 @@ public static class DockerAwareHost
     /// O host, resolvido para o ambiente. Em desenvolvimento local devolve <c>localhost</c>;
     /// em qualquer outro caso, o valor como veio.
     /// </summary>
+    /// <param name="host">O host como veio da configuração (do secret, em produção).</param>
+    /// <param name="configuration">A configuração — para ler o <c>DOCKER_RUN</c>.</param>
+    /// <param name="environment">O ambiente — para saber se é <c>Development</c>.</param>
+    /// <param name="onResolved">
+    /// Chamado quando a troca acontece — com a chave, o valor original e o resolvido. É por aqui
+    /// que a troca vai para o LOG, e isso não é ruído: sem ela, o comportamento é mágica
+    /// silenciosa. Quando o secret aponta para um host que não existe na sua máquina, o erro é um
+    /// "No such host is known" cru — e nada liga uma coisa à outra. Você fica olhando para o
+    /// appsettings, que diz `localhost`, sem entender.
+    /// </param>
     public static string Resolve(
         string host,
         IConfiguration configuration,
-        IHostEnvironment environment) =>
-        IsLocalDevelopment(configuration, environment) ? "localhost" : host;
+        IHostEnvironment environment,
+        Action<string, string, string>? onResolved = null)
+    {
+        if (!IsLocalDevelopment(configuration, environment)
+            || string.IsNullOrWhiteSpace(host)
+            || host.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            return host;
+        }
+
+        onResolved?.Invoke("Database:Host", host, "localhost");
+
+        return "localhost";
+    }
 
     /// <summary>
     /// O mesmo, para a connection string do Redis (<c>host:porta</c>, com opções depois da
     /// vírgula). Troca <b>só o host</b> — a porta e as opções seguem intactas, e a senha nem
     /// passa por aqui (ela vem separada, em <c>Redis:Password</c>).
     /// </summary>
+    /// <param name="connectionString">A connection string como veio da configuração.</param>
+    /// <param name="configuration">A configuração — para ler o <c>DOCKER_RUN</c>.</param>
+    /// <param name="environment">O ambiente — para saber se é <c>Development</c>.</param>
+    /// <param name="onResolved">Chamado quando a troca acontece. Ver <see cref="Resolve"/>.</param>
     public static string ResolveRedis(
         string connectionString,
         IConfiguration configuration,
-        IHostEnvironment environment)
+        IHostEnvironment environment,
+        Action<string, string, string>? onResolved = null)
     {
         if (string.IsNullOrWhiteSpace(connectionString)
             || !IsLocalDevelopment(configuration, environment))
@@ -85,6 +112,11 @@ public static class DockerAwareHost
             : "6379";
 
         var resolved = $"localhost:{port}";
+
+        if (!endpoint.StartsWith("localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            onResolved?.Invoke("Redis:ConnectionString", endpoint, resolved);
+        }
 
         return parts.Length == 2 ? $"{resolved},{parts[1]}" : resolved;
     }

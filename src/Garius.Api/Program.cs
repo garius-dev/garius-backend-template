@@ -74,11 +74,25 @@ else
 
 builder.Services.AddFieldEncryption(builder.Configuration);
 
+
+// Diz, EM VOZ ALTA, quando o endereço do secret é trocado por localhost.
+//
+// Sem esta linha a troca é mágica silenciosa: o secret guarda o host de PRODUÇÃO
+// (postgres-prod), a app o troca sozinha em dev — e quando algo dá errado, o erro sai como
+// um "No such host is known" cru, sem nada ligando uma coisa à outra. Você fica olhando para
+// o appsettings, que diz `localhost`, sem entender de onde veio o outro nome. (Aconteceu.)
+void LogHostResolved(string key, string original, string resolved) =>
+    Log.Information(
+        "Dev local (fora do Docker): {Key} '{Original}' -> '{Resolved}' " +
+        "(o secret guarda o endereço de produção — ver DockerAwareHost)",
+        key, original, resolved);
+
 var naming = builder.Services.AddPersistence(
     builder.Configuration,
     builder.Environment,
     Assembly.GetExecutingAssembly(),
-    migrateOnly);
+    migrateOnly,
+    onHostResolved: LogHostResolved);
 
 if (migrateOnly)
 {
@@ -101,7 +115,11 @@ builder.Services.AddConfiguredHealthChecks(naming);
 // Redis: dependência OBRIGATÓRIA (refresh tokens + DataProtection, que cifra o cookie).
 // Também registra o DataProtection com o keyring NO REDIS — sem isso, duas réplicas não
 // conseguem ler o cookie uma da outra.
-builder.Services.AddRedis(builder.Configuration, builder.Environment, naming.AppUsername);
+builder.Services.AddRedis(
+    builder.Configuration,
+    builder.Environment,
+    naming.AppUsername,
+    onHostResolved: LogHostResolved);
 
 // Autenticação e autorização por PERMISSÃO — não por papel.
 //

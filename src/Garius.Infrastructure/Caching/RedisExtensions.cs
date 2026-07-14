@@ -23,7 +23,8 @@ public static class RedisExtensions
         this IServiceCollection services,
         IConfiguration configuration,
         IHostEnvironment environment,
-        string applicationName)
+        string applicationName,
+        Action<string, string, string>? onHostResolved = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
@@ -35,7 +36,10 @@ public static class RedisExtensions
         // O secret guarda o endereço de PRODUÇÃO (o nome do container). Rodando na máquina, fora
         // do Docker, ele vira `localhost` — mantendo a porta e as opções. Ver DockerAwareHost.
         options.ConnectionString = DockerAwareHost.ResolveRedis(
-            options.ConnectionString, configuration, environment);
+            options.ConnectionString,
+            configuration,
+            environment,
+            onResolved: onHostResolved);
 
         if (string.IsNullOrWhiteSpace(options.ConnectionString))
         {
