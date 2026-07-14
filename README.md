@@ -1123,7 +1123,19 @@ Variações:
 ./deploy.ps1 -Local             # só a imagem local, para conferir
 ```
 
-**Configuração, uma vez por servidor** (não por aplicação): copie `docker/server.env.example` para `docker/server.env` e preencha `SSH_HOST`, `SSH_USER`, `SSH_PASSWORD` e `REMOTE_ROOT`. Ele **não vai para o git** — guarda a senha.
+**Nenhum arquivo novo para manter.** O destino vai no `.env` que você já tem — três linhas:
+
+```bash
+DEPLOY_PATH=/opt/garius/customers/tcm/sfchortolandia   # a pasta no servidor; o nome é seu
+DEPLOY_HOST=1.2.3.4
+DEPLOY_USER=root
+```
+
+O `DEPLOY_PATH` é **você** quem escolhe: não precisa ser igual ao `PROJECT_NAME`. O deploy cria a pasta se ela não existir.
+
+> **A senha não fica no `.env`, de propósito.** Esse arquivo é *enviado para o próprio servidor* (o compose o lê lá) — e uma senha de SSH viajando junto com o que ela protege, e ficando em disco em claro numa máquina de produção, é uma péssima ideia.
+>
+> O script a pede **uma vez** e a guarda cifrada em `%USERPROFILE%\.garius\`, pela DPAPI do Windows — atrelada ao seu usuário, de modo que nem outro usuário da mesma máquina consegue decifrá-la. Nos deploys seguintes ele não pergunta mais.
 
 > **Passar a versão como argumento não é conveniência: é o que evita o erro mais caro do deploy.** Subir o `APP_VER` é o passo mais fácil de esquecer, e o esquecimento é *silencioso* — o servidor faz `pull` de uma tag que já tem em cache e sobe o binário **antigo**, sem erro nenhum. Aqui o `.env` local é o **mesmo** que vai para o servidor, então os dois nunca divergem.
 

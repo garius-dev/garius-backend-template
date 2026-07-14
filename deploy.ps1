@@ -173,18 +173,20 @@ if ($NoDeploy) {
 }
 
 # --- 6. Deploy no servidor ----------------------------------------------------
-$serverFile = Join-Path $root 'docker/server.env'
-
-if (-not (Test-Path $serverFile)) {
+#
+# Tudo vem do MESMO .env — não há um segundo arquivo de configuração para manter.
+if (-not $cfg['DEPLOY_HOST']) {
     Write-Host @"
 
-Imagem publicada, mas NÃO houve deploy: falta o docker/server.env.
+Imagem publicada, mas NÃO houve deploy: falta o DEPLOY_HOST no .env.
 
-Crie-o (a partir do server.env.example) com o endereço do servidor e a pasta de destino.
-Ele NÃO vai para o git — guarda a senha.
+Acrescente as três linhas (veja o .env.example):
+
+    DEPLOY_PATH=/opt/garius/customers/tcm/sfchortolandia
+    DEPLOY_HOST=1.2.3.4
+    DEPLOY_USER=root
 
 Ou suba à mão, no servidor:
-    cd <pasta da app>
     docker compose -f docker-compose.app.yml pull
     docker compose -f docker-compose.app.yml up -d
 "@ -ForegroundColor Yellow
@@ -192,15 +194,34 @@ Ou suba à mão, no servidor:
     exit 0
 }
 
-$server = Read-KeyValueFile $serverFile
-
-foreach ($key in 'SSH_HOST', 'SSH_USER', 'SSH_PASSWORD', 'REMOTE_ROOT') {
-    if (-not $server[$key]) { Die "$key não está definido em docker/server.env." }
+foreach ($key in 'DEPLOY_PATH', 'DEPLOY_USER') {
+    if (-not $cfg[$key]) { Die "$key não está definido no .env (o DEPLOY_HOST está)." }
 }
 
-$remoteFolder = "$($server['REMOTE_ROOT'].TrimEnd('/'))/$($cfg['PROJECT_NAME'])"
+$remoteFolder = $cfg['DEPLOY_PATH'].TrimEnd('/')
 
-Write-Step "Deploy em $($server['SSH_HOST']):$remoteFolder"
+# A SENHA não está no .env, de propósito: esse arquivo é ENVIADO para o próprio servidor
+# (o compose o lê lá). Uma senha de SSH viajando junto com o que ela protege — e ficando
+# em disco, em claro, num servidor de produção — é uma péssima ideia.
+#
+# Ela é pedida UMA VEZ e guardada cifrada pela DPAPI do Windows, atrelada ao seu usuário:
+# nem outro usuário da mesma máquina consegue decifrá-la.
+$vault = Join-Path $env:USERPROFILE '.garius'
+$passwordFile = Join-Path $vault "$($cfg['DEPLOY_USER'])@$($cfg['DEPLOY_HOST']).cred"
+
+if (Test-Path $passwordFile) {
+    $securePassword = Get-Content $passwordFile | ConvertTo-SecureString
+} else {
+    Write-Host ''
+    $securePassword = Read-Host "  Senha de $($cfg['DEPLOY_USER'])@$($cfg['DEPLOY_HOST'])" -AsSecureString
+
+    New-Item -ItemType Directory -Path $vault -Force | Out-Null
+    $securePassword | ConvertFrom-SecureString | Set-Content $passwordFile
+
+    Write-Ok "Senha guardada (cifrada) em $passwordFile — não vou pedir de novo."
+}
+
+Write-Step "Deploy em $($cfg['DEPLOY_HOST']):$remoteFolder"
 
 # O `plink`/`pscp` não são garantidos no Windows; o OpenSSH é (vem com o sistema desde o
 # Windows 10). Mas ele não aceita senha por argumento — de propósito. Então usamos o
@@ -213,11 +234,10 @@ if (-not (Get-Module -ListAvailable -Name Posh-SSH)) {
 
 Import-Module Posh-SSH
 
-$securePassword = ConvertTo-SecureString $server['SSH_PASSWORD'] -AsPlainText -Force
-$credential = New-Object System.Management.Automation.PSCredential($server['SSH_USER'], $securePassword)
+$credential = New-Object System.Management.Automation.PSCredential($cfg['DEPLOY_USER'], $securePassword)
 
-$ssh = New-SSHSession -ComputerName $server['SSH_HOST'] -Credential $credential -AcceptKey -ErrorAction Stop
-$sftp = New-SFTPSession -ComputerName $server['SSH_HOST'] -Credential $credential -AcceptKey -ErrorAction Stop
+$ssh = New-SSHSession -ComputerName $cfg['DEPLOY_HOST'] -Credential $credential -AcceptKey -ErrorAction Stop
+$sftp = New-SFTPSession -ComputerName $cfg['DEPLOY_HOST'] -Credential $credential -AcceptKey -ErrorAction Stop
 
 try {
     function Invoke-Remote($command) {
