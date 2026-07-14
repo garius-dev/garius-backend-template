@@ -34,6 +34,11 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT}
       - MIGRATE_ONLY=true
+
+      # Diz à aplicação que ela está DENTRO de um container: os endereços do secret
+      # (postgres-prod, redis-prod) valem como estão. Fora do Docker, em Development, ela
+      # os troca por `localhost` sozinha. Ver DockerAwareHost.
+      - DOCKER_RUN=true
       - GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/gcp_service_account
     secrets:
       - gcp_service_account
@@ -49,6 +54,7 @@ services:
         condition: service_completed_successfully
     environment:
       - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT}
+      - DOCKER_RUN=true
       # Onde a app acha a service account, que por sua vez destrava o Google
       # Secret Manager (senhas do banco, chaves de criptografia, JWT). Sem isto a
       # app NÃO SOBE — é fail-fast deliberado, não um bug.

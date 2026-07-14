@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.DataProtection;
+using Garius.Infrastructure.Configuration;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using StackExchange.Redis;
 
@@ -20,13 +22,20 @@ public static class RedisExtensions
     public static IServiceCollection AddRedis(
         this IServiceCollection services,
         IConfiguration configuration,
+        IHostEnvironment environment,
         string applicationName)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(environment);
 
         var options = new RedisOptions();
         configuration.GetSection(RedisOptions.SectionName).Bind(options);
+
+        // O secret guarda o endereço de PRODUÇÃO (o nome do container). Rodando na máquina, fora
+        // do Docker, ele vira `localhost` — mantendo a porta e as opções. Ver DockerAwareHost.
+        options.ConnectionString = DockerAwareHost.ResolveRedis(
+            options.ConnectionString, configuration, environment);
 
         if (string.IsNullOrWhiteSpace(options.ConnectionString))
         {

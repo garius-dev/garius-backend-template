@@ -4,6 +4,7 @@ using Garius.Core.Security;
 using Garius.Infrastructure.Database;
 using Garius.Infrastructure.Security;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting.Internal;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Garius.Tests.Database;
@@ -130,6 +131,7 @@ public class MigrateOnlyBootTests
         // Redis, sem DataProtection, sem a pilha de autorização, nada disso existe no bootstrap.
         services.AddPersistence(
             configuration,
+            new HostingEnvironment { EnvironmentName = "Production" },
             Assembly.GetAssembly(typeof(Program))!,
             migrateOnly: true);
 
