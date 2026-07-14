@@ -34,6 +34,43 @@ internal sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> log
             return true;
         }
 
+        // CORPO INVÁLIDO: culpa do CLIENTE (400), nunca falha nossa (500).
+        //
+        // ⚠️ Sem isto, um `POST` com `{}` ou com JSON quebrado devolvia **500 server.unexpected**.
+        // Isso é errado em três frentes ao mesmo tempo:
+        //
+        //   1. MENTE sobre a causa: culpa o servidor por um request que o cliente montou errado.
+        //   2. POLUI o log: o GetLevel do Serilog marca 5xx como Error — então qualquer scanner
+        //      batendo na API gerava ERRO no Grafana. Alarme falso, no sistema que existe para
+        //      dar alarme verdadeiro.
+        //   3. É um vetor barato de ruído: mandar lixo no corpo custa nada, e gerava stack trace.
+        //
+        // Um JSON malformado nem chega ao validador — ele estoura na DESSERIALIZAÇÃO, antes de
+        // existir um objeto para validar. Por isso o tratamento é aqui, e não no filtro de
+        // validação: são dois problemas diferentes.
+        if (exception is BadHttpRequestException or System.Text.Json.JsonException)
+        {
+            var badRequest = ProblemDetailsFactory.Create(
+                Error.Validation(
+                    "request.invalid_body",
+                    "O corpo da requisição é inválido ou está malformado."),
+                httpContext);
+
+            // Warning, não Error: é o cliente que errou. Aparece no log (pode ser um front com
+            // bug, e você quer saber), mas não dispara o alarme de 5xx.
+            logger.LogWarning(
+                "Corpo inválido em {Method} {Path}: {Reason}",
+                httpContext.Request.Method,
+                httpContext.Request.Path,
+                exception.Message);
+
+            httpContext.Response.StatusCode = badRequest.Status!.Value;
+
+            await httpContext.Response.WriteAsJsonAsync<ProblemDetails>(badRequest, cancellationToken);
+
+            return true;
+        }
+
         var traceId = ProblemDetailsFactory.GetTraceId(httpContext);
 
         logger.LogError(
