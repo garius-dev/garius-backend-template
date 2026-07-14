@@ -215,6 +215,61 @@ public class AuthFlowTests(ApiFactory factory)
     }
 
     /// <summary>
+    /// <b>Como o front OBTÉM o token de CSRF sem relogar.</b>
+    ///
+    /// <para>
+    /// O login emite o par de CSRF — mas era o <b>único</b> lugar que o emitia, e isso deixava um
+    /// buraco: o cookie de sessão dura <b>8 horas</b>, enquanto o cookie de CSRF é de <b>sessão do
+    /// navegador</b>. Quem fecha a aba e volta tem uma sessão perfeitamente válida e <b>nenhuma
+    /// forma de obter o token</b> — todo POST responde 403, e a única saída seria deslogar e
+    /// logar de novo.
+    /// </para>
+    ///
+    /// <para>
+    /// O <c>GET /auth/csrf</c> é a saída. É anônimo de propósito: o token de CSRF <b>não é uma
+    /// credencial</b> — ele não autentica ninguém, só prova que quem o envia consegue LER cookies
+    /// da nossa origem. Sem o cookie de SESSÃO, ele não abre porta nenhuma.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task O_front_recupera_o_token_de_CSRF_sem_precisar_relogar()
+    {
+        var email = await SeedUserAsync(tenantCount: 1);
+
+        var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            HandleCookies = true
+        });
+
+        var login = await client.PostAsJsonAsync(
+            "/auth/login", new { email, password = Password }, TestContext.Current.CancellationToken);
+
+        login.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        // O usuário fechou a aba: o cookie de CSRF (de sessão do navegador) sumiu, mas o de
+        // sessão — que dura 8h — continua lá. O front NÃO sabe mais o token.
+        //
+        // Sem o GET /auth/csrf, este seria o beco sem saída: sessão boa, POSTs todos em 403.
+        var recovered = await client.GetAsync("/auth/csrf", TestContext.Current.CancellationToken);
+
+        recovered.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var csrf = ExtractCookie(recovered, "garius.csrf-token");
+
+        csrf.ShouldNotBeNullOrEmpty(
+            "o endpoint precisa emitir o cookie legível pelo JS — é o valor que o front reenvia");
+
+        // E com ele, um POST que altera estado volta a funcionar.
+        client.DefaultRequestHeaders.Add("X-CSRF-Token", csrf);
+
+        var refresh = await client.PostAsync("/auth/refresh", null, TestContext.Current.CancellationToken);
+
+        refresh.StatusCode.ShouldBe(
+            HttpStatusCode.OK,
+            "com o token recuperado, o front volta a poder alterar estado — sem relogar");
+    }
+
+    /// <summary>
     /// Quando o CSRF <b>de fato</b> barra alguém, o erro tem de dizer <b>que foi o CSRF</b>.
     ///
     /// <para>

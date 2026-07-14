@@ -62,6 +62,30 @@ public static class AuthEndpoints
         .RequireAuthorization(AuthorizationSetup.AuthenticatedWithoutTenantPolicy)
         .WithSummary("Escolhe o tenant e cria a sessão.");
 
+        group.MapGet("/csrf", (HttpContext http, IAntiforgery antiforgery) =>
+        {
+            // Emite (ou reemite) o par de CSRF: o cookie-segredo HttpOnly e o cookie legível
+            // pelo JS com o request token.
+            http.IssueCsrfToken(antiforgery);
+
+            return Result<object>.Success(new { issued = true }).ToHttpResult(http);
+        })
+        // ANÔNIMO, e isso é deliberado: o token de CSRF NÃO é uma credencial. Ele não autentica
+        // ninguém — só prova que quem o envia consegue LER cookies da nossa origem, coisa que um
+        // site de terceiro não consegue (same-origin policy). Emiti-lo a um anônimo não concede
+        // nada: sem o cookie de SESSÃO, o token de CSRF sozinho não abre porta nenhuma.
+        //
+        // Exigir autenticação aqui, aliás, criaria o mesmo impasse que o /auth/login tinha.
+        .AllowAnonymous()
+        .WithSummary("Emite o token de CSRF (cookie legível pelo JS).")
+        .WithDescription(
+            "O login já emite o par de CSRF — este endpoint existe para o front RECUPERÁ-LO " +
+            "sem precisar relogar. É o caso do usuário que volta com a sessão ainda válida " +
+            "(o cookie de sessão dura 8h) mas sem o cookie de CSRF (que é de sessão do " +
+            "navegador): sem isto, ele teria uma sessão boa e NENHUMA forma de obter o token, " +
+            "e todo POST responderia 403 até ele deslogar e logar de novo. " +
+            "Chame-o no boot do app, antes da primeira requisição que altera estado.");
+
         group.MapPost("/refresh", async (
             AuthService auth,
             HttpContext http,
