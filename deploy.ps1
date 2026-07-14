@@ -10,20 +10,25 @@
 
     O que ele faz, em ordem — e para no primeiro erro:
 
-      1. sobe o APP_VER no .env (local);
+      1. grava a versão no APP_VER do .env (a versão tem UMA fonte: o argumento);
       2. `dotnet clean && build && test` — a suíte inteira, com Postgres e Redis reais;
       3. `docker build` e `docker push`;
       4. envia o compose, o .env e a service account para o servidor (SFTP, com
          verificação de hash em cada arquivo);
-      5. `docker compose up -d` no servidor.
+      5. `docker compose up -d --force-recreate` no servidor.
 
     Publicar uma imagem que não passa nos testes é publicar um deploy que vai falhar no
     servidor, onde é caro descobrir. Por isso o passo 2 não é opcional (o -SkipTests
     existe, mas ele avisa).
 
 .PARAMETER Version
-    A versão desta release (ex.: v1.2.0). Grava no .env e vira a tag da imagem.
-    Omita para reusar o APP_VER que já está lá.
+    A versão desta release (ex.: v1.2.0). OBRIGATÓRIA.
+
+    Ela é a ÚNICA fonte: o script a grava no APP_VER do .env, e esse mesmo .env é enviado
+    ao servidor. Você não a edita à mão em lugar nenhum.
+
+    Republicar uma tag que já existe é PERMITIDO (só avisa). O `--force-recreate` no
+    servidor garante que o container é recriado mesmo com o nome da imagem igual.
 
 .PARAMETER Environment
     Qual pasta de docker/<env>/apps/<app> usar. Padrão: prod.
@@ -102,37 +107,48 @@ function Read-KeyValueFile($path) {
 $cfg = Read-KeyValueFile $envFile
 
 # --- 2. A versão --------------------------------------------------------------
-# Subir o APP_VER é o passo mais fácil de esquecer, e o esquecimento é silencioso: o
-# servidor faz `pull` de uma tag que já tem em cache e sobe o binário ANTIGO, sem erro
-# nenhum. Passar a versão como argumento faz o script gravá-la — e o .env local e o do
-# servidor nunca mais divergem (é o MESMO arquivo: ele é enviado junto).
-if ($Version) {
-    if ($Version -notmatch '^v?\d+\.\d+\.\d+') {
-        Die "Versão '$Version' não parece uma versão (esperado: v1.2.3)."
-    }
+#
+# A versão tem UMA fonte: este argumento. O APP_VER do .env é DERIVADO dele — o script o
+# grava, e o mesmo .env é enviado ao servidor.
+#
+# Antes, a versão era digitada em dois lugares (aqui e no .env), e "dois lugares" sempre
+# vira "um deles desatualizado": o servidor puxaria uma tag que já tem em cache e subiria o
+# binário ANTIGO, sem erro nenhum.
+if (-not $Version) {
+    Die @"
+Falta a versão.
 
-    (Get-Content $envFile) -replace '^APP_VER=.*', "APP_VER=$Version" | Set-Content $envFile -Encoding UTF8
-    $cfg['APP_VER'] = $Version
+    .\deploy.ps1 v1.2.0
 
-    Write-Ok "APP_VER=$Version gravado no .env"
+(Ela é gravada no .env e vira a tag da imagem — você não a edita à mão em lugar nenhum.)
+"@
 }
 
-foreach ($key in 'PROJECT_NAME', 'DOCKER_HUB_PROFILE', 'APP_VER') {
+if ($Version -notmatch '^v?\d+\.\d+\.\d+') {
+    Die "Versão '$Version' não parece uma versão (esperado: v1.2.3)."
+}
+
+(Get-Content $envFile) -replace '^APP_VER=.*', "APP_VER=$Version" | Set-Content $envFile -Encoding UTF8
+$cfg['APP_VER'] = $Version
+
+Write-Ok "APP_VER=$Version"
+
+foreach ($key in 'PROJECT_NAME', 'DOCKER_HUB_PROFILE') {
     if (-not $cfg[$key]) { Die "$key não está definido no .env." }
 }
 
-$image = "$($cfg['DOCKER_HUB_PROFILE'])/$($cfg['PROJECT_NAME']):$($cfg['APP_VER'])"
+$image = "$($cfg['DOCKER_HUB_PROFILE'])/$($cfg['PROJECT_NAME']):$Version"
 
 Write-Step "Deploy de $image"
 
-# Guarda contra o erro mais caro: republicar uma tag que já está no ar. O servidor faria
-# `pull` e receberia um binário DIFERENTE com o mesmo número de versão — e a partir daí
-# nada mais bate com nada quando você for investigar um bug.
+# Republicar uma tag que já existe é PERMITIDO — é rotina durante o desenvolvimento de uma
+# release. Só avisa, para você não fazer isso sem perceber: quem já tiver puxado essa tag
+# está com um binário diferente do que está sendo publicado agora.
 if (-not $Local) {
     docker manifest inspect $image 2>$null | Out-Null
 
     if ($LASTEXITCODE -eq 0) {
-        Die "A tag $($cfg['APP_VER']) JÁ EXISTE no Docker Hub.`n       Suba a versão: ./deploy.ps1 v<nova>"
+        Write-Host "  A tag $Version já existe no Docker Hub — vai ser SOBRESCRITA." -ForegroundColor Yellow
     }
 }
 
@@ -308,7 +324,17 @@ try {
     # que é exatamente o que se quer.
     Write-Step 'Subindo (migrations, depois a API)'
 
-    $up = Invoke-SSHCommand -SessionId $ssh.SessionId -Command "cd '$remoteFolder' && docker compose -f docker-compose.app.yml pull && docker compose -f docker-compose.app.yml up -d" -TimeOut 600
+    # --force-recreate é OBRIGATÓRIO aqui, e não é excesso de zelo.
+    #
+    # Republicar uma tag é permitido (é rotina durante uma release). Mas aí o NOME da imagem
+    # não muda — e o `up -d` puro compara nomes: ele conclui que "nada mudou" e deixa o
+    # container ANTIGO no ar. Você faria o deploy, veria "up-to-date", e continuaria rodando
+    # o binário velho, sem um único erro em lugar nenhum.
+    $composeUp = "cd '$remoteFolder' && " +
+                 "docker compose -f docker-compose.app.yml pull && " +
+                 "docker compose -f docker-compose.app.yml up -d --force-recreate"
+
+    $up = Invoke-SSHCommand -SessionId $ssh.SessionId -Command $composeUp -TimeOut 600
 
     Write-Host $up.Output
 
