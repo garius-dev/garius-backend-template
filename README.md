@@ -30,7 +30,7 @@ Template backend .NET 10 para APIs de produção. Foco em segurança e integraç
 
 ## Estado atual
 
-**Tudo o que está aqui está pronto e testado** — 169 testes contra Postgres e Redis reais (Testcontainers), build estrito (warnings = erro) e auditoria de CVE no build.
+**Tudo o que está aqui está pronto e testado** — 227 testes contra Postgres e Redis reais (Testcontainers), build estrito (warnings = erro) e auditoria de CVE no build.
 
 | Área | Estado |
 |---|---|
@@ -52,9 +52,31 @@ Template backend .NET 10 para APIs de produção. Foco em segurança e integraç
 | Outbox transacional | ✅ |
 | Documentação (Scalar) e painel de jobs, protegidos por permissão | ✅ |
 
-**O template está completo.**
+### ⚠️ O que o template NÃO tem (e você vai precisar)
 
-Não documente aqui o que ainda não existe. Documentação que mente é pior que documentação ausente.
+A **infraestrutura** de autenticação e autorização está completa e testada. As **telas de administração** dela, não — e isso é deliberado, mas você precisa saber antes de começar:
+
+| Falta | O que isso significa na prática |
+|---|---|
+| **CRUD de usuários** | Não há `POST /users`. O **único** usuário que existe é o superadmin do `Bootstrap:AdminEmail`. |
+| **CRUD de papéis** | Não há como criar o papel "Gerente" pela API. |
+| **Conceder permissão / papel** | Não há endpoint. Hoje se faz **por SQL**, na tabela `user_claims` (ou `user_roles`). |
+| **Alterar/recuperar senha** | Não há `POST /auth/change-password` nem fluxo de "esqueci a senha". |
+
+As permissões `users.*` e `roles.*` **já estão declaradas** no catálogo, e o `.RequirePermission(...)` já as reconhece — falta só escrever os endpoints. O motivo de não virem prontos: **essas telas variam demais entre aplicações** (uma quer convite por e-mail, outra quer SSO, outra quer aprovação manual), e um CRUD genérico seria a primeira coisa que você jogaria fora.
+
+O que já existe e ajuda: **`GET /permissions`** devolve o catálogo inteiro (valor, recurso, ação, descrição) para o front montar a tela de papéis sem manter uma segunda lista em JavaScript.
+
+> **Enquanto isso, para conceder uma permissão a um usuário**, é um `INSERT` em `user_claims`:
+> ```sql
+> INSERT INTO user_claims ("Id", "UserId", "ClaimType", "ClaimValue", "TenantId", "Enabled", "CreatedAt", "UpdatedAt")
+> VALUES (gen_random_uuid(), '<user-id>', 'permission', 'invoices.approve', NULL, true, now(), now());
+> ```
+> `TenantId = NULL` vale em todos os tenants. **Invalide o cache** depois (o `PermissionResolver` guarda no Redis) — ou espere o TTL.
+
+---
+
+**A infraestrutura está completa.** Não documente aqui o que ainda não existe. Documentação que mente é pior que documentação ausente.
 
 ---
 
@@ -96,7 +118,9 @@ Daí saem os nomes no Postgres: `db_tcm_sfchortolandia_api`, `hangfire_tcm_sfcho
 
 > ⚠️ **Não copie a pasta à mão, e não peça a uma IA para renomear.** Renomear ~160 arquivos é mecânico, e uma IA acerta ~99% — o problema é o 1%: um `InternalsVisibleTo` órfão, ou o `Database:ApplicationName` esquecido. Nada disso quebra o build. **O `ApplicationName` esquecido é o pior:** a aplicação compila, sobe e funciona — apontando para o **mesmo banco e o mesmo usuário** do template. A colisão só aparece quando duas aplicações se atropelam em produção.
 
-> Dois testes (`TemplateDerivationTests`) **falham** se o `Database:ApplicationName` ou o `GcpSecrets:SecretName` ainda forem os do template. São a rede de segurança para quem copiou a pasta assim mesmo — transformam os dois erros mais caros em erro de build.
+> `TemplateDerivationTests` **falha na app derivada** se o `Database:ApplicationName` ou o `GcpSecrets:SecretName` ainda forem os do template — transformando os dois erros mais caros (duas apps colidindo no mesmo banco, duas apps lendo o mesmo secret) em erro de build.
+>
+> ⚠️ **No próprio template esses testes são PULADOS** (`Assert.SkipWhen` no assembly `Garius.*`) — eles não teriam como distinguir "é o template" de "esqueci de renomear". Ou seja: **eles não protegem quem copia a pasta à mão** e mantém os nomes `Garius.*`. É mais uma razão para usar `dotnet new`, e não `cp -r`.
 
 > ⚠️ **O `SecretName` esquecido é ainda pior que o `ApplicationName`.** A colisão de banco ao menos **quebra** visivelmente quando duas apps se atropelam. Já duas aplicações lendo o **mesmo secret** cifram dados pessoais com a **mesma chave**, e **nada nunca falha**: a rotação de uma quebra a outra, e quem tiver acesso ao secret de uma decifra a PII de todas.
 
@@ -204,7 +228,7 @@ Aponte para ele em `appsettings.Development.json` e `appsettings.Production.json
 - **`TrustedProxies` é obrigatório em produção** — é a rede Docker do Traefik. Sem ele **a aplicação não sobe** (falha explícita e proposital — veja o porquê logo abaixo).
 - **`AllowedOrigins` vazio nega tudo.** Se houver frontend, declare a origem.
 
-> Depois disso, o deploy é **um comando**: `./deploy.ps1 v1.2.0` — testa, builda, publica e sobe no servidor. O `.env` tem **cinco linhas** e não cresce.
+> Depois disso, o deploy é **um comando**: `./deploy.ps1 v1.2.0` — testa, builda, publica e sobe no servidor. O `.env` tem **oito linhas** e não cresce.
 
 #### `Security:TrustedProxies` — o que é, e por que não pode ficar vazio
 
@@ -370,7 +394,7 @@ Para ler em claro, use `IPiiReader` — ele autoriza, revela **e audita**:
 
 ```csharp
 var email = await piiReader.RevealAsync(
-    user.Email, PiiScope.Email, nameof(User), user.Id,
+    user.EmailPii, PiiScope.Email, nameof(ApplicationUser), user.Id,
     reason: "Exibição no perfil do titular", ct);
 ```
 
@@ -497,8 +521,10 @@ public sealed class ProductService(AppDbContext db)
 **`ProductEndpoints.cs`** — Minimal API. `ToHttpResult` é a única forma de responder.
 
 ```csharp
-using Garius.Api.Infrastructure.Errors;
-using Garius.Api.Infrastructure.Validation;
+using Garius.Api.Infrastructure.Authorization;   // RequirePermission
+using Garius.Api.Infrastructure.Errors;          // ToHttpResult
+using Garius.Api.Infrastructure.Validation;      // ValidateRequests
+using Garius.Core.Authorization;                 // Permissions
 
 namespace Garius.Api.Features.Products;
 
@@ -956,6 +982,7 @@ Por **IP real** (o `CF-Connecting-IP` validado), com contadores **no Redis**. Co
 
 ```json
 "RateLimit": {
+  "Enabled": true,
   "Global":  { "PermitLimit": 100, "WindowSeconds": 60 },
   "Login":   { "PermitLimit": 5,   "WindowSeconds": 60 },
   "Token":   { "PermitLimit": 10,  "WindowSeconds": 60 },
@@ -1231,7 +1258,7 @@ Variações:
 ./deploy.ps1 -Local             # só a imagem local, para conferir
 ```
 
-**Nenhum arquivo novo para manter.** O destino vai no `.env` que você já tem — três linhas:
+**Nenhum arquivo novo para manter.** O destino vai no `.env` que você já tem:
 
 ```bash
 DEPLOY_PATH=/opt/garius/customers/tcm/sfchortolandia   # a pasta no servidor; o nome é seu
@@ -1247,7 +1274,7 @@ O `DEPLOY_PATH` é **você** quem escolhe: não precisa ser igual ao `PROJECT_NA
 
 > **Passar a versão como argumento não é conveniência: é o que evita o erro mais caro do deploy.** Subir o `APP_VER` é o passo mais fácil de esquecer, e o esquecimento é *silencioso* — o servidor faz `pull` de uma tag que já tem em cache e sobe o binário **antigo**, sem erro nenhum. Aqui o `.env` local é o **mesmo** que vai para o servidor, então os dois nunca divergem.
 
-> O script **recusa republicar uma tag que já existe** no Docker Hub — senão o servidor receberia um binário *diferente* com o mesmo número de versão, e a partir daí nada mais bate com nada quando você for investigar um bug.
+> Republicar uma tag que já existe é **permitido** (o script avisa, em amarelo). É rotina enquanto uma release está sendo trabalhada. O aviso existe porque quem já tiver puxado aquela tag fica com um binário **diferente** do que está sendo publicado agora — e, na hora de investigar um bug, a versão deixa de identificar o binário. Em produção, prefira uma tag nova.
 
 > A service account vai com permissão **600** (e a pasta `secrets/`, **700**). É uma credencial: com `777`, qualquer usuário do servidor lê a chave que abre a senha do banco, as chaves de criptografia e a do JWT.
 

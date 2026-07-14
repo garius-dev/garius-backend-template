@@ -22,8 +22,10 @@ namespace Garius.Core.Security;
 /// </para>
 ///
 /// <code>
+/// // EmailPii (o Pii cifrado), não user.Email — este é `string`, existe só em memória
+/// // (o Identity precisa dele como entrada) e NÃO é o dado que está no banco.
 /// var email = await piiReader.RevealAsync(
-///     user.Email, PiiScope.Email, nameof(ApplicationUser), user.Id,
+///     user.EmailPii, PiiScope.Email, nameof(ApplicationUser), user.Id,
 ///     reason: "Exibição no perfil do próprio titular", ct);
 ///
 /// if (email.IsSuccess) { /* email.Value é o e-mail em claro, e o acesso foi registrado */ }

@@ -3,7 +3,7 @@ using Garius.Api.Infrastructure.Errors;
 using Garius.Core.Authorization;
 using Garius.Core.Results;
 
-namespace Garius.Api.Features.Permissions;
+namespace Garius.Api.Features.Catalog;
 
 /// <param name="Value">A permissão: <c>invoices.approve</c>.</param>
 /// <param name="Resource">O recurso, para o frontend agrupar por seção.</param>
@@ -11,9 +11,33 @@ namespace Garius.Api.Features.Permissions;
 /// <param name="Description">Texto legível, para a tela de administração de papéis.</param>
 public sealed record PermissionDto(string Value, string Resource, string Action, string Description);
 
-public static class PermissionEndpoints
+/// <summary>
+/// O catálogo de permissões da aplicação.
+///
+/// <para>
+/// ⚠️ <b>Esta feature se chama <c>Catalog</c>, e NÃO <c>Permissions</c> — de propósito.</b>
+/// </para>
+///
+/// <para>
+/// Um namespace <c>Garius.Api.Features.Permissions</c> <b>colide</b> com a classe
+/// <see cref="Garius.Core.Authorization.Permissions"/>. Dentro de qualquer <c>Features.*</c>, o
+/// identificador <c>Permissions</c> passa a resolver para o NAMESPACE — e um membro de namespace
+/// <b>vence o <c>using</c></b>. O resultado é que <c>.RequirePermission(Permissions.Products.Read)</c>,
+/// a linha mais comum que uma app derivada escreve, <b>não compila</b>:
+/// </para>
+///
+/// <code>error CS0234: The type or namespace name 'Products' does not exist in the namespace 'Garius.Api.Features.Permissions'</code>
+///
+/// <para>
+/// O erro aponta para o lugar errado (parece faltar uma referência), e a saída óbvia seria um
+/// alias (<c>using AppPermissions = ...</c>) em <b>todo</b> arquivo de feature — um imposto
+/// permanente sobre cada app derivada. Renomear a feature mata a colisão na raiz, e ninguém mais
+/// precisa saber que ela existiu.
+/// </para>
+/// </summary>
+public static class CatalogEndpoints
 {
-    public static void MapPermissionEndpoints(this IEndpointRouteBuilder app)
+    public static void MapCatalogEndpoints(this IEndpointRouteBuilder app)
     {
         ArgumentNullException.ThrowIfNull(app);
 
@@ -26,7 +50,9 @@ public static class PermissionEndpoints
         // nova que alguém esquecesse de copiar.
         group.MapGet("/", (HttpContext http) =>
         {
-            var catalog = Core.Authorization.Permissions.Catalog
+            // Sem alias e sem qualificar `Core.Authorization.` — é exatamente o que o rename
+            // desta feature comprou.
+            var catalog = Permissions.Catalog
                 .Select(p => new PermissionDto(p.Value, p.Resource, p.Action, p.Description))
                 .OrderBy(p => p.Resource, StringComparer.Ordinal)
                 .ThenBy(p => p.Action, StringComparer.Ordinal)
@@ -36,7 +62,7 @@ public static class PermissionEndpoints
                 .Success(catalog)
                 .ToHttpResult(http);
         })
-        .RequirePermission(Core.Authorization.Permissions.Roles.Read)
+        .RequirePermission(Permissions.Roles.Read)
         .WithSummary("Lista todas as permissões da aplicação.")
         .WithDescription(
             "Usado pelo frontend para montar a tela de administração de papéis. " +

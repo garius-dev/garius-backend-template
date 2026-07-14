@@ -61,10 +61,23 @@ public static class Permissions
     ///
     /// <para>
     /// <b>Separada de <see cref="Users"/> e <see cref="Roles"/> de propósito.</b> Quem cria um
-    /// client pode lhe dar <b>qualquer</b> escopo — inclusive um que ele próprio não tem. É,
-    /// na prática, uma permissão de escalada de privilégio: dá para criar um client
-    /// superadministrador e usá-lo. Deve ser concedida a muito pouca gente, e é por isso que
-    /// não vem de carona em "administrar usuários".
+    /// client escolhe os escopos dele — e, sem uma trava, isso seria uma <b>escalada de
+    /// privilégio em dois passos</b>: criar um client com escopo <c>*</c>, autenticar-se com ele,
+    /// virar superadministrador. Uma permissão de aparência inócua ("criar credenciais") daria
+    /// acesso total.
+    /// </para>
+    ///
+    /// <para>
+    /// A trava existe: <c>MachineAuthService.ValidateScopesAsync</c> compara os escopos pedidos
+    /// com as permissões de <b>quem está criando</b> (respeitando curinga) e recusa o que exceder
+    /// — <b>ninguém delega um poder que não tem</b>. Neutralizar essa checagem faz 3 testes
+    /// falharem.
+    /// </para>
+    ///
+    /// <para>
+    /// Ainda assim, <c>clients.create</c> permite delegar a uma máquina <b>tudo o que você
+    /// tem</b> — numa credencial de longa duração, que vive fora do navegador. Conceda a pouca
+    /// gente, e é por isso que não vem de carona em "administrar usuários".
     /// </para>
     /// </summary>
     public static class Clients

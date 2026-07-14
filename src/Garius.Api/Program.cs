@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Garius.Api.Features.Auth;
 using Garius.Api.Features.Machine;
-using Garius.Api.Features.Permissions;
+using Garius.Api.Features.Catalog;
 using Garius.Api.Infrastructure.Authorization;
 using Garius.Api.Infrastructure.Database;
 using Garius.Api.Features.Admin;
@@ -243,7 +243,7 @@ app.UseBackgroundJobs();
 app.MapConfiguredHealthChecks();
 app.MapAuthEndpoints();
 app.MapMachineEndpoints();
-app.MapPermissionEndpoints();
+app.MapCatalogEndpoints();
 
 // Login das páginas administrativas (/jobs e /scalar), que são HTML abertas no NAVEGADOR.
 // Reusa o AuthService — mesmo lockout, mesmo rate limit, mesmo cookie. Ver AdminEndpoints.

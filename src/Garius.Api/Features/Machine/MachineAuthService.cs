@@ -7,8 +7,6 @@ using Garius.Infrastructure.Database;
 using Garius.Infrastructure.Machine;
 using Microsoft.EntityFrameworkCore;
 
-// Ver MachineEndpoints: `Permissions` colidiria com o namespace Garius.Api.Features.Permissions.
-using AppPermissions = Garius.Core.Authorization.Permissions;
 
 namespace Garius.Api.Features.Machine;
 
@@ -260,7 +258,7 @@ public sealed class MachineAuthService(
         }
 
         var unknown = scopes
-            .Where(scope => scope != AppPermissions.SuperAdmin && !AppPermissions.Exists(scope))
+            .Where(scope => scope != Permissions.SuperAdmin && !Permissions.Exists(scope))
             .ToList();
 
         if (unknown.Count > 0)

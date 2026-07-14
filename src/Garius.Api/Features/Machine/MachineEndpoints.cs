@@ -1,12 +1,8 @@
 using Garius.Api.Infrastructure.Authorization;
 using Garius.Api.Infrastructure.Errors;
 using Garius.Api.Infrastructure.Validation;
+using Garius.Core.Authorization;
 using Garius.Core.Machine;
-
-// O identificador `Permissions`, aqui dentro, resolveria para o NAMESPACE
-// Garius.Api.Features.Permissions — não para a classe Garius.Core.Authorization.Permissions.
-// O alias desfaz a ambiguidade sem obrigar a qualificar o nome inteiro a cada uso.
-using AppPermissions = Garius.Core.Authorization.Permissions;
 
 namespace Garius.Api.Features.Machine;
 
@@ -69,7 +65,7 @@ public static class MachineEndpoints
 
     /// <summary>
     /// Administração das credenciais de máquina. Exige <c>clients.*</c> — ver o comentário em
-    /// <see cref="AppPermissions.Clients"/> sobre por que essa permissão é perigosa.
+    /// <see cref="Permissions.Clients"/> sobre por que essa permissão é perigosa.
     /// </summary>
     private static void MapClientAdministration(IEndpointRouteBuilder app)
     {
@@ -88,7 +84,7 @@ public static class MachineEndpoints
             HttpContext http,
             CancellationToken ct) =>
                 (await machine.CreateClientAsync(request, ct)).ToHttpResult(http))
-        .RequirePermission(AppPermissions.Clients.Create)
+        .RequirePermission(Permissions.Clients.Create)
         .WithSummary("Cria um client M2M.")
         .WithDescription(
             "O client_secret vem na resposta e NUNCA MAIS: o banco só guarda o hash. " +
@@ -101,7 +97,7 @@ public static class MachineEndpoints
             HttpContext http,
             CancellationToken ct) =>
                 (await machine.ListClientsAsync(ct)).ToHttpResult(http))
-        .RequirePermission(AppPermissions.Clients.Read)
+        .RequirePermission(Permissions.Clients.Read)
         .WithSummary("Lista os clients M2M (sem os segredos).");
 
         group.MapDelete("/clients/{id:guid}", async (
@@ -110,7 +106,7 @@ public static class MachineEndpoints
             HttpContext http,
             CancellationToken ct) =>
                 (await machine.RevokeClientAsync(id, ct)).ToHttpResult(http))
-        .RequirePermission(AppPermissions.Clients.Revoke)
+        .RequirePermission(Permissions.Clients.Revoke)
         .WithSummary("Revoga um client M2M.")
         .WithDescription(
             "⚠️ Os JWTs JÁ EMITIDOS continuam válidos até expirarem (até Jwt:LifetimeMinutes, " +
@@ -125,7 +121,7 @@ public static class MachineEndpoints
             HttpContext http,
             CancellationToken ct) =>
                 (await machine.CreateApiKeyAsync(request, ct)).ToHttpResult(http))
-        .RequirePermission(AppPermissions.Clients.Create)
+        .RequirePermission(Permissions.Clients.Create)
         .WithSummary("Cria uma chave de API para um terceiro.")
         .WithDescription(
             "A chave vem na resposta e NUNCA MAIS. Enviada em `X-Api-Key: <chave>`. " +
@@ -137,7 +133,7 @@ public static class MachineEndpoints
             HttpContext http,
             CancellationToken ct) =>
                 (await machine.ListApiKeysAsync(ct)).ToHttpResult(http))
-        .RequirePermission(AppPermissions.Clients.Read)
+        .RequirePermission(Permissions.Clients.Read)
         .WithSummary("Lista as chaves de API (prefixo, escopos e consumo da quota).");
 
         group.MapDelete("/api-keys/{id:guid}", async (
@@ -146,7 +142,7 @@ public static class MachineEndpoints
             HttpContext http,
             CancellationToken ct) =>
                 (await machine.RevokeApiKeyAsync(id, ct)).ToHttpResult(http))
-        .RequirePermission(AppPermissions.Clients.Revoke)
+        .RequirePermission(Permissions.Clients.Revoke)
         .WithSummary("Revoga uma chave de API. O efeito é imediato.");
     }
 }
