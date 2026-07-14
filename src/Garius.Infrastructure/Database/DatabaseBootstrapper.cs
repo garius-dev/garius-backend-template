@@ -236,6 +236,15 @@ public sealed class DatabaseBootstrapper(
             }
 
             // Objetos que as MIGRATIONS criarem daqui em diante já nascem acessíveis.
+            //
+            // ⚠️ É esta linha — e não o GRANT ON ALL TABLES do GrantOnExistingObjectsAsync — que
+            // faz uma tabela criada por uma migration FUTURA (de uma app derivada, num deploy
+            // posterior) nascer acessível ao usuário de runtime. Removê-la faz o teste
+            // `Uma_tabela_criada_por_uma_migration_FUTURA_ja_nasce_acessivel` falhar.
+            //
+            // Só vale para objetos criados PELA ROLE QUE A EXECUTOU (a root) — que é justamente
+            // a role do container de migrations. Se uma app derivada criar tabelas por outro
+            // caminho, este privilégio não a alcança.
             await ExecuteAsync(
                 connection,
                 $"ALTER DEFAULT PRIVILEGES IN SCHEMA public " +

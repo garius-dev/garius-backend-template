@@ -122,6 +122,87 @@ public class BootstrapTests(DatabaseFixture fixture) : IClassFixture<DatabaseFix
             "sem CREATE no BANCO do Hangfire, a API sobe e morre no primeiro boot");
     }
 
+    /// <summary>
+    /// <b>O cenário de toda app derivada:</b> ela cria features novas, com <b>tabelas novas</b>,
+    /// numa migration que roda num deploy <i>posterior</i> ao bootstrap inicial. O usuário de
+    /// runtime tem de conseguir usar essa tabela — sem que ninguém rode um GRANT à mão.
+    ///
+    /// <para>
+    /// Não é gratuito: <c>ALTER DEFAULT PRIVILEGES</c> (que o bootstrap executa) só se aplica a
+    /// objetos criados <b>pela role que o executou</b> — aqui, a root, que é justamente quem o
+    /// container de migrations usa. Se a app derivada criasse tabelas por outro caminho, os
+    /// privilégios default <b>não a alcançariam</b>.
+    /// </para>
+    ///
+    /// <para>
+    /// E há a rede de segurança: o <c>GrantOnExistingObjectsAsync</c> roda <b>depois</b> das
+    /// migrations, em TODO deploy, dando <c>GRANT ... ON ALL TABLES</c>. É o que cobre o caso em
+    /// que o privilégio default não pegou. As duas defesas juntas são o motivo de "criar uma
+    /// tabela nova" simplesmente funcionar.
+    /// </para>
+    ///
+    /// <para>
+    /// Sem isso, o sintoma seria brutal e tardio: a migration aplica com sucesso, o deploy passa,
+    /// e a API morre com <c>permission denied for table</c> na primeira query da feature nova —
+    /// em produção.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Uma_tabela_criada_por_uma_migration_FUTURA_ja_nasce_acessivel()
+    {
+        var (naming, bootstrapper) = Build();
+
+        await using var setup = CreateContext(naming.RootConnectionStringToAppDatabase);
+
+        // 1. O bootstrap do primeiro deploy.
+        await bootstrapper.RunAsync(setup, TestContext.Current.CancellationToken);
+
+        // 2. Uma app derivada acrescenta uma feature. A migration dela roda no deploy seguinte,
+        //    pelo MESMO caminho (o container de migrations, conectado como root).
+        await using (var root = new NpgsqlConnection(naming.RootConnectionStringToAppDatabase))
+        {
+            await root.OpenAsync(TestContext.Current.CancellationToken);
+
+            await using var migration = new NpgsqlCommand(
+                @"CREATE TABLE invoices (id uuid PRIMARY KEY, total numeric NOT NULL)", root);
+
+            await migration.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        // 3. E o usuário de RUNTIME (não o root) usa a tabela nova — sem GRANT manual nenhum.
+        await using var connection = new NpgsqlConnection(naming.AppConnectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+        await using var insert = new NpgsqlCommand(
+            "INSERT INTO invoices (id, total) VALUES (gen_random_uuid(), 10)", connection);
+
+        var exception = await Record.ExceptionAsync(
+            () => insert.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+
+        exception.ShouldBeNull(
+            "uma tabela criada por uma migration futura tem de nascer acessível ao runtime — " +
+            "senão a app derivada sobe e morre com 'permission denied for table' na primeira " +
+            "query da feature nova, em produção");
+
+        await using var select = new NpgsqlCommand("SELECT count(*) FROM invoices", connection);
+
+        Convert.ToInt64(
+            await select.ExecuteScalarAsync(TestContext.Current.CancellationToken),
+            System.Globalization.CultureInfo.InvariantCulture)
+            .ShouldBe(1);
+
+        // E o runtime continua SEM poder alterar o schema: o privilégio novo é de DADO
+        // (SELECT/INSERT/UPDATE/DELETE), nunca de DDL.
+        await using var ddl = new NpgsqlCommand("DROP TABLE invoices", connection);
+
+        var denied = await Should.ThrowAsync<PostgresException>(
+            () => ddl.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+
+        denied.SqlState.ShouldBe(
+            PostgresErrorCodes.InsufficientPrivilege,
+            "acessar a tabela nova não pode significar poder DERRUBÁ-LA");
+    }
+
     [Fact]
     public async Task O_banco_fica_FECHADO_para_qualquer_outra_role_do_servidor()
     {

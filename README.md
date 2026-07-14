@@ -604,6 +604,12 @@ dotnet ef migrations add AddProducts \
 
 O `ProductConfiguration` é descoberto automaticamente (`ApplyConfigurationsFromAssembly`), e o `AppDbContext` aplica sozinho: os dois query filters (soft delete + tenant), o tipo `timestamptz` nos timestamps e os índices de `Enabled` e `TenantId`.
 
+**E as permissões do banco? Não precisa fazer nada.** A tabela nova já nasce acessível ao usuário de runtime — que continua sem poder fazer DDL.
+
+Quem garante isso é o `ALTER DEFAULT PRIVILEGES` do bootstrap: ele concede `SELECT/INSERT/UPDATE/DELETE` sobre as tabelas que **ainda não existem**, criadas dali em diante pela role que o executou (a root — que é exatamente a do container de migrations). Um `GRANT ON ALL TABLES` comum não serviria: ele só alcança o que já existe.
+
+> Sem isso, o sintoma seria tardio e brutal: a migration aplica, o deploy passa, e a API morre com `permission denied for table` **na primeira query da feature nova, em produção**. Há um teste (`Uma_tabela_criada_por_uma_migration_FUTURA_ja_nasce_acessivel`) que roda uma migration *depois* do bootstrap e exercita a tabela **com o usuário de runtime real** — remover o `ALTER DEFAULT PRIVILEGES` o faz falhar.
+
 ### Um teste
 
 Testes de integração contra Postgres e Redis **reais** (Testcontainers). Não use mock de banco: o template depende de comportamento específico do Postgres (índice parcial, `timestamptz`, ordenação de `uuid`) — testar contra um substituto validaria o substituto.
@@ -706,9 +712,23 @@ POST /auth/logout                        → encerra
 
 ### CSRF — o que o front precisa fazer
 
-O login devolve dois cookies. Um deles, **`garius.csrf-token`**, é legível pelo JavaScript. Leia-o e reenvie no header em **toda requisição que altera estado** (POST/PUT/PATCH/DELETE):
+**De onde vem o token.** Duas fontes, e você precisa das duas:
+
+| Origem | Quando |
+|---|---|
+| `POST /auth/login` | emite o par de CSRF junto com a sessão |
+| `GET /auth/csrf` | **recupera** o token a qualquer momento, sem relogar |
+
+O `GET /auth/csrf` existe porque o cookie de sessão dura **8 horas** e o de CSRF é de **sessão do navegador**. Sem ele, quem fecha a aba e volta fica num beco sem saída: **sessão válida e nenhuma forma de obter o token** — todo POST responde 403, e a única saída seria deslogar e logar de novo. **Chame-o no boot do app**, antes da primeira requisição que altera estado.
+
+> Ele é **anônimo** de propósito: o token de CSRF **não é uma credencial**. Ele não autentica ninguém — só prova que quem o envia consegue *ler* cookies da nossa origem, coisa que um site de terceiro não consegue (same-origin policy). Sem o cookie de **sessão**, o token sozinho não abre porta nenhuma.
+
+O cookie **`garius.csrf-token`** é legível pelo JavaScript. Leia-o e reenvie no header em **toda requisição que altera estado** (POST/PUT/PATCH/DELETE):
 
 ```js
+// no boot do app: garante que o token existe, mesmo com a sessão vinda de antes
+await fetch('/auth/csrf', { credentials: 'include' });
+
 const csrf = document.cookie
   .split('; ')
   .find(c => c.startsWith('garius.csrf-token='))
