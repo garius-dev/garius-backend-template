@@ -76,6 +76,53 @@ public class ComposeFileTests
         }
     }
 
+    /// <summary>
+    /// O <b>compose</b> e o <b>deploy.ps1</b> têm de concordar no nome da service account.
+    ///
+    /// <para>
+    /// O arquivo que o GCP entrega tem um nome gerado (<c>garius-tcm-7d83fa2633d3.json</c>), mas
+    /// o compose monta um caminho <b>fixo</b>. Se o script não renomeia no envio, o compose morre
+    /// no servidor com <i>"no such file"</i> — depois de já ter rodado os testes, buildado a
+    /// imagem, publicado no Docker Hub e enviado tudo. O erro mais caro possível.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void O_compose_e_o_deploy_concordam_no_nome_da_service_account()
+    {
+        var appDir = FindAppDirectory();
+
+        var compose = File.ReadAllText(Path.Combine(appDir, "docker-compose.app.yml"));
+        var deploy = File.ReadAllText(FindDeployScript());
+
+        // O nome que o compose monta no container.
+        const string expected = "gcp-service-account.json";
+
+        compose.ShouldContain(
+            expected,
+            customMessage: "o compose precisa apontar para um nome FIXO de service account");
+
+        deploy.ShouldContain(
+            expected,
+            customMessage:
+                "o deploy.ps1 precisa RENOMEAR a service account para o nome que o compose " +
+                "espera — o arquivo do GCP vem com um nome gerado, e sem a renomeação o " +
+                "compose falha no servidor com 'no such file'");
+    }
+
+    private static string FindDeployScript()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "deploy.ps1")))
+        {
+            directory = directory.Parent;
+        }
+
+        Assert.NotNull(directory);
+
+        return Path.Combine(directory.FullName, "deploy.ps1");
+    }
+
     private static string FindAppDirectory()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

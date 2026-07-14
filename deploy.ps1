@@ -301,21 +301,47 @@ try {
     }
 
     # A service account: a credencial que destrava o Secret Manager.
+    #
+    # ⚠️ O NOME é RENOMEADO no envio, e isso não é frescura.
+    #
+    # O arquivo que o GCP te dá tem um nome gerado (garius-tcm-7d83fa2633d3.json), mas o
+    # compose monta um caminho FIXO (./secrets/gcp-service-account.json). Sem a renomeação,
+    # os dois nunca batem — e o compose morre no servidor com "no such file", depois de já
+    # ter buildado, publicado e enviado tudo.
+    #
+    # Renomear aqui é melhor do que exigir que VOCÊ renomeie: é a próxima coisa a esquecer,
+    # e o erro só aparece no fim do deploy.
     $secretsDir = Join-Path $appDir 'secrets'
     $serviceAccount = Get-ChildItem $secretsDir -Filter '*.json' -ErrorAction SilentlyContinue | Select-Object -First 1
 
     if (-not $serviceAccount) {
-        Die "Não achei a service account em $secretsDir.`n       Sem ela a aplicação não sobe (é o que destrava o Secret Manager)."
+        Die @"
+Não achei a service account (nenhum .json) em:
+    $secretsDir
+
+É a credencial que destrava o Secret Manager — sem ela a aplicação não sobe.
+Ponha o JSON que o GCP te deu nessa pasta. O nome não importa: o deploy o renomeia.
+"@
     }
 
     Invoke-Remote "mkdir -p '$remoteFolder/secrets'"
-    Set-SFTPItem -SessionId $sftp.SessionId -Path $serviceAccount.FullName -Destination "$remoteFolder/secrets" -Force
+
+    # O destino leva o nome que o COMPOSE espera, seja qual for o nome de origem.
+    Set-SFTPItem `
+        -SessionId $sftp.SessionId `
+        -Path $serviceAccount.FullName `
+        -Destination "$remoteFolder/secrets" `
+        -Force
+
+    if ($serviceAccount.Name -ne 'gcp-service-account.json') {
+        Invoke-Remote "mv '$remoteFolder/secrets/$($serviceAccount.Name)' '$remoteFolder/secrets/gcp-service-account.json'"
+    }
 
     # 600, não 777: é uma CREDENCIAL. Com 777, qualquer usuário do servidor lê a chave que
     # abre todos os segredos da aplicação — senha do banco, chaves de criptografia, JWT.
-    Invoke-Remote "chmod 700 '$remoteFolder/secrets' && chmod 600 '$remoteFolder/secrets/'*.json"
+    Invoke-Remote "chmod 700 '$remoteFolder/secrets' && chmod 600 '$remoteFolder/secrets/gcp-service-account.json'"
 
-    Write-Ok 'service account enviada (600)'
+    Write-Ok "service account enviada ($($serviceAccount.Name) -> gcp-service-account.json, 600)"
 
     # Sobe. O `pull` traz a imagem nova; o `up -d` recria o que mudou.
     #
