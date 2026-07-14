@@ -123,22 +123,7 @@ O `dotnet new` já apontou a sua app para o secret **dela** (`tcm-sfchortolandia
 }
 ```
 
-E os **endereços de produção**, no mesmo secret:
-
-```json
-{
-  "Database:Host": "postgres-prod",
-  "Redis:ConnectionString": "redis-prod:6379",
-  "Security:TrustedProxies:0": "172.18.0.0/16",
-  "Cors:AllowedOrigins:0": "https://app.suaapp.com"
-}
-```
-
-> **UM secret só, e ele serve os dois ambientes.** Os valores acima são os de **produção** (dentro de um container, o endereço do outro serviço é o **nome do container** — `localhost`, ali, é o próprio container).
->
-> Rodando **local**, com `dotnet run`, a aplicação troca o host por `localhost` **sozinha** — ver `DockerAwareHost`. A troca só acontece quando é `Development` **e** não há `DOCKER_RUN` (que o compose injeta). Em produção o valor do secret vale como está, sempre.
->
-> É o que evita manter duas cópias de qualquer coisa em sincronia — e a cópia esquecida é o bug clássico.
+> **O secret guarda só SENHAS e CHAVES — e é o mesmo em dev e em produção.** O que muda de ambiente é o `appsettings`: os endereços locais (`localhost`) estão no `appsettings.Development.json`, e os de produção (nomes dos containers, rede do Traefik, CORS) no `appsettings.Production.json`. Endereço não é segredo, e por isso não vai para o Secret Manager.
 
 
 > **`Bootstrap:*` é o que resolve o ovo e a galinha.** Sem elas, a aplicação sobe **fechada** — a `FallbackPolicy` exige autenticação em tudo, o `/scalar` exige `docs.read`, o `/jobs` exige `jobs.read` — e não existe **nenhum usuário** para conceder permissão a ninguém. Nem para entrar e criar o primeiro.

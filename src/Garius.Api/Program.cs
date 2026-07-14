@@ -76,7 +76,6 @@ builder.Services.AddFieldEncryption(builder.Configuration);
 
 var naming = builder.Services.AddPersistence(
     builder.Configuration,
-    builder.Environment,
     Assembly.GetExecutingAssembly(),
     migrateOnly);
 
@@ -101,7 +100,7 @@ builder.Services.AddConfiguredHealthChecks(naming);
 // Redis: dependência OBRIGATÓRIA (refresh tokens + DataProtection, que cifra o cookie).
 // Também registra o DataProtection com o keyring NO REDIS — sem isso, duas réplicas não
 // conseguem ler o cookie uma da outra.
-builder.Services.AddRedis(builder.Configuration, builder.Environment, naming.AppUsername);
+builder.Services.AddRedis(builder.Configuration, naming.AppUsername);
 
 // Autenticação e autorização por PERMISSÃO — não por papel.
 //
