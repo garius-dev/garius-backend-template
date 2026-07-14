@@ -746,9 +746,19 @@ Sem o header, a API responde **403** — com o código `auth.csrf_token_invalid`
 
 > Requisições autenticadas por `Authorization: Bearer` ou `X-Api-Key` (ver [Autenticação de máquina](#autenticação-de-máquina-m2m-e-terceiros)) dispensam CSRF: não há cookie ambiente que o navegador envie sozinho, então não há o que explorar.
 
-**`POST /auth/login` e `POST /auth/token` também dispensam** — e a razão é o que define a regra: os dois **provam uma credencial** (a senha, o `client_secret`). Quem já a tivesse não precisaria de CSRF nenhum, e o pior que um ataque conseguiria é logar a vítima na conta do próprio atacante. Exigir o token no login, aliás, o torna **impossível de chamar** para quem já tem uma sessão aberta no navegador: o POST leva o cookie da sessão anterior, o antiforgery exige um header que o cliente ainda não tem, e **relogar responde 403**.
+**Três endpoints dispensam o token**, cada um por sua razão:
 
-O **`/auth/refresh` não é isento**, e a distinção é o ponto todo: ele **não prova nada** — apoia-se num cookie que o navegador manda sozinho, que é exatamente a condição que o CSRF cobre. Sem o token, um site malicioso rotacionaria o refresh token da vítima e derrubaria a sessão dela.
+| Endpoint | Por que dispensa |
+|---|---|
+| `POST /auth/login` | **prova a senha** |
+| `POST /auth/token` | **prova o `client_secret`** |
+| `POST /auth/refresh` | o `SameSite=Lax` já barra o ataque |
+
+Nos dois primeiros, quem já tivesse a credencial não precisaria de CSRF nenhum — o pior que um ataque conseguiria é logar a vítima na conta do próprio atacante. E exigir o token no **login** o torna **impossível de chamar** para quem já tem sessão aberta: o POST leva o cookie da sessão anterior, o antiforgery cobra um header que o cliente ainda não tem, e **relogar responde 403**.
+
+O **refresh** é diferente: quem barra o ataque ali é o **`SameSite=Lax`**, não o token. `Lax` impede o navegador de enviar o cookie num **POST cross-site** — e o refresh é POST, então o site malicioso não consegue nem fazer o cookie viajar. O token de CSRF ali não acrescentava defesa, só **custava**: o front precisava tê-lo em mãos *antes* de conseguir renovar a sessão, justamente na situação em que ele pode não tê-lo. **Uma redundância que cria um impasse não é defesa em profundidade — é só o impasse.**
+
+> O **`/auth/logout` continua exigindo** o token, de propósito: forçar o logout de alguém é um ataque real (irritante, não crítico), ele não prova credencial nenhuma, e — ao contrário do refresh — o front sempre tem o token quando chega lá.
 
 ### Permissões
 

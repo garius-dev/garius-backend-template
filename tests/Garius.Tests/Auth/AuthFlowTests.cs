@@ -259,14 +259,52 @@ public class AuthFlowTests(ApiFactory factory)
         csrf.ShouldNotBeNullOrEmpty(
             "o endpoint precisa emitir o cookie legível pelo JS — é o valor que o front reenvia");
 
-        // E com ele, um POST que altera estado volta a funcionar.
+        // E com ele, um POST que EXIGE CSRF volta a funcionar.
         client.DefaultRequestHeaders.Add("X-CSRF-Token", csrf);
 
+        var logout = await client.PostAsync("/auth/logout", null, TestContext.Current.CancellationToken);
+
+        logout.StatusCode.ShouldBe(
+            HttpStatusCode.OK,
+            "com o token recuperado, o front volta a poder alterar estado — sem relogar");
+    }
+
+    /// <summary>
+    /// <b>O <c>/auth/refresh</c> não exige o token de CSRF</b> — e quem barra o ataque ali é o
+    /// <c>SameSite=Lax</c> do cookie, não o token.
+    ///
+    /// <para>
+    /// <c>Lax</c> impede o navegador de enviar o cookie num <b>POST cross-site</b>, e o refresh é
+    /// POST: o site malicioso não consegue nem fazer o cookie viajar. O token de CSRF ali não
+    /// acrescentava defesa — só <b>custava</b>: o front precisava tê-lo em mãos ANTES de
+    /// conseguir renovar a sessão, justamente na situação em que ele pode não tê-lo (o cookie de
+    /// sessão dura 8h; o de CSRF é de sessão do navegador).
+    /// </para>
+    ///
+    /// <para>
+    /// Uma redundância que cria um impasse não é defesa em profundidade — é só o impasse.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task O_refresh_funciona_SEM_o_token_de_CSRF()
+    {
+        var email = await SeedUserAsync(tenantCount: 1);
+
+        var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            HandleCookies = true
+        });
+
+        await client.PostAsJsonAsync(
+            "/auth/login", new { email, password = Password }, TestContext.Current.CancellationToken);
+
+        // SEM o header X-CSRF-Token — o front acabou de voltar e não tem o token.
         var refresh = await client.PostAsync("/auth/refresh", null, TestContext.Current.CancellationToken);
 
         refresh.StatusCode.ShouldBe(
             HttpStatusCode.OK,
-            "com o token recuperado, o front volta a poder alterar estado — sem relogar");
+            "renovar a sessão não pode depender de um token que o front talvez não tenha — " +
+            "o SameSite=Lax já barra o POST cross-site que o CSRF cobriria");
     }
 
     /// <summary>
@@ -294,7 +332,8 @@ public class AuthFlowTests(ApiFactory factory)
             "/auth/login", new { email, password = Password }, TestContext.Current.CancellationToken);
 
         // POST com cookie de sessão e sem o header — uma falha de CSRF genuína.
-        var response = await client.PostAsync("/auth/refresh", null, TestContext.Current.CancellationToken);
+        // (O /auth/logout, não o /auth/refresh: o refresh é isento — ver O_refresh_funciona_SEM_o_token_de_CSRF.)
+        var response = await client.PostAsync("/auth/logout", null, TestContext.Current.CancellationToken);
 
         response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
 
@@ -317,10 +356,11 @@ public class AuthFlowTests(ApiFactory factory)
     /// header.
     ///
     /// <para>
-    /// ⚠️ Usa o <c>/auth/refresh</c>, e isso <b>importa</b>: o refresh não prova senha nenhuma —
-    /// ele se apoia num cookie que o navegador manda sozinho. Isentá-lo do CSRF (como o
-    /// <c>/auth/login</c> é isento) deixaria um site malicioso rotacionar o token da vítima e
-    /// derrubar a sessão dela. Ver <c>CsrfProtection.CredentialEstablishingPaths</c>.
+    /// ⚠️ Usa o <c>/auth/logout</c>, e a escolha <b>importa</b>: é um POST que altera estado, não
+    /// prova credencial nenhuma e <b>não</b> é isento. (O <c>/auth/login</c>, o <c>/auth/token</c>
+    /// e o <c>/auth/refresh</c> são — cada um por sua razão. Ver
+    /// <c>CsrfProtection.CredentialEstablishingPaths</c>.) Este é o teste que dá <b>dentes</b> à
+    /// proteção: sem ele, isentar tudo passaria despercebido.
     /// </para>
     /// </summary>
     [Fact]
@@ -337,7 +377,7 @@ public class AuthFlowTests(ApiFactory factory)
             "/auth/login", new { email, password = Password }, TestContext.Current.CancellationToken);
 
         // Sem o header X-CSRF-Token — como faria um site de terceiro.
-        var response = await client.PostAsync("/auth/refresh", null, TestContext.Current.CancellationToken);
+        var response = await client.PostAsync("/auth/logout", null, TestContext.Current.CancellationToken);
 
         response.StatusCode.ShouldBe(
             HttpStatusCode.Forbidden,

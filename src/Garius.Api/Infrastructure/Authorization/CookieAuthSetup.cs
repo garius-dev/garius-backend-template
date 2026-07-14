@@ -30,7 +30,28 @@ internal static class CookieAuthSetup
     /// </summary>
     internal const string CookieName = "__Host-garius.auth";
 
-    /// <summary>O refresh token, num cookie separado e restrito à rota de refresh.</summary>
+    /// <summary>
+    /// O refresh token, num cookie <b>separado</b> do de sessão.
+    ///
+    /// <para>
+    /// ⚠️ Ele vai com <c>Path=/</c> — e <b>não</b> restrito a <c>/auth/refresh</c>, que seria o
+    /// instinto (o cookie viajaria só onde é usado, reduzindo a exposição). <b>Não dá para ter as
+    /// duas coisas:</b> o prefixo <c>__Host-</c> <b>exige</b> <c>Path=/</c>, e o navegador
+    /// <b>descarta em silêncio</b> um cookie <c>__Host-</c> com qualquer outro path.
+    /// </para>
+    ///
+    /// <para>
+    /// A escolha é deliberada: o <c>__Host-</c> também <b>proíbe o atributo <c>Domain</c></b>, e é
+    /// a proteção mais forte que existe contra um subdomínio comprometido sobrescrever o cookie de
+    /// autenticação. Vale mais do que restringir o path.
+    /// </para>
+    ///
+    /// <para>
+    /// Se você trocar o path, <b>troque também o nome</b> (tirando o <c>__Host-</c>) — do
+    /// contrário o login "funciona", o <c>Set-Cookie</c> sai na resposta, o navegador joga o
+    /// cookie fora, e o refresh nunca mais funciona. Sem um único erro em lugar nenhum.
+    /// </para>
+    /// </summary>
     internal const string RefreshCookieName = "__Host-garius.refresh";
 
     /// <summary>

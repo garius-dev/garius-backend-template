@@ -207,18 +207,31 @@ internal static class CsrfProtection
     /// </para>
     ///
     /// <para>
-    /// <b>O <c>/auth/refresh</c> NÃO entra nesta lista</b>, e a distinção é o ponto todo: o
-    /// refresh <b>não prova nada</b> — ele se apoia num cookie que o navegador manda sozinho,
-    /// que é exatamente a condição que o CSRF existe para cobrir. Um site malicioso não
-    /// conseguiria <i>ler</i> a resposta (same-origin policy), mas conseguiria <b>rotacionar o
-    /// token da vítima</b> — e, com a detecção de reuso ligada, derrubar a sessão dela. O
-    /// <c>/logout</c> fica de fora pela mesma razão.
+    /// O <c>/auth/refresh</c> <b>também</b> entra, e a razão é diferente: quem barra o ataque
+    /// ali é o <c>SameSite=Lax</c> do cookie, não o token. <c>Lax</c> impede o navegador de
+    /// enviar o cookie num <b>POST cross-site</b> — e o refresh é POST. O site malicioso nem
+    /// consegue fazer o cookie viajar, então não há o que o token de CSRF acrescente.
+    /// </para>
+    ///
+    /// <para>
+    /// E exigi-lo ali <b>custava</b>: o front precisava ter o token de CSRF em mãos <i>antes</i>
+    /// de conseguir renovar a sessão — justamente na situação em que ele pode não tê-lo (o cookie
+    /// de sessão dura 8h; o de CSRF é de sessão do navegador). Uma redundância que cria um
+    /// impasse não é defesa em profundidade; é só o impasse.
+    /// </para>
+    ///
+    /// <para>
+    /// O <c>/logout</c> <b>continua exigindo</b> o token, de propósito: forçar o logout de alguém
+    /// é um ataque real (irritante, não crítico), ele não prova credencial nenhuma, e — ao
+    /// contrário do refresh — o front sempre tem o token quando chega lá (ele acabou de usar a
+    /// sessão).
     /// </para>
     /// </summary>
     private static readonly string[] CredentialEstablishingPaths =
     [
         "/auth/login",
         "/auth/token",
+        "/auth/refresh",
     ];
 
     /// <summary>
