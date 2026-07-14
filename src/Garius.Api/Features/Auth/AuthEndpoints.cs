@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Garius.Api.Infrastructure.Authorization;
 using Garius.Api.Infrastructure.Errors;
+using Garius.Api.Infrastructure.Validation;
 using Garius.Core.Authorization;
 using Garius.Core.Results;
 using Microsoft.AspNetCore.Antiforgery;
@@ -13,7 +14,11 @@ public static class AuthEndpoints
     {
         ArgumentNullException.ThrowIfNull(app);
 
-        var group = app.MapGroup("/auth").WithTags("Auth");
+        // ValidateRequests: todo endpoint DESTE GRUPO cujo request tenha um
+        // AbstractValidator<T> registrado é validado antes do handler — sem uma chamada por
+        // endpoint para alguém esquecer. Um endpoint novo aqui dentro nasce coberto.
+        // Ver ValidationSetup e AuthValidators.
+        var group = app.MapGroup("/auth").WithTags("Auth").ValidateRequests();
 
         // --- públicos ---
 

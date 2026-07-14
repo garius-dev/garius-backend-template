@@ -135,6 +135,24 @@ public class MachineScopeEscalationTests(ApiFactory factory)
         fora.StatusCode.ShouldBe(HttpStatusCode.Forbidden, "users.* não satisfaz roles.delete");
     }
 
+    /// <summary>
+    /// Um escopo inexistente é barrado <b>antes de tocar o banco</b> — agora pelo VALIDATOR, e
+    /// não mais pelo service.
+    ///
+    /// <para>
+    /// O <c>code</c> mudou de <c>client.unknown_scope</c> para <c>validation.failed</c>, e é uma
+    /// melhora: o erro passa a vir <b>por campo</b> (<c>errors.scopes</c>), dizendo QUAL escopo
+    /// está errado — em vez de uma mensagem genérica sobre "algum" escopo. É o formato que um
+    /// formulário consome.
+    /// </para>
+    ///
+    /// <para>
+    /// A checagem no <c>MachineAuthService.ValidateScopesAsync</c> <b>continua existindo</b>: ela
+    /// é a defesa contra ESCALADA (você não delega um poder que não tem), precisa saber QUEM está
+    /// criando, e é exercitada pelos outros testes desta classe. O validator cobre outra coisa —
+    /// o escopo que simplesmente não existe.
+    /// </para>
+    /// </summary>
     [Fact]
     public async Task Um_escopo_inexistente_e_rejeitado_antes_de_chegar_ao_banco()
     {
@@ -152,7 +170,13 @@ public class MachineScopeEscalationTests(ApiFactory factory)
         var body = await response.Content.ReadFromJsonAsync<JsonElement>(
             TestContext.Current.CancellationToken);
 
-        body.GetProperty("code").GetString().ShouldBe("client.unknown_scope");
+        body.GetProperty("code").GetString().ShouldBe("validation.failed");
+
+        // O erro aponta o CAMPO — e o campo é `scopes`.
+        body.GetProperty("errors").TryGetProperty("scopes[0]", out var scopeErrors).ShouldBeTrue(
+            "o erro tem de dizer QUAL escopo está errado, não só que 'algum' está");
+
+        scopeErrors.GetArrayLength().ShouldBeGreaterThan(0);
     }
 
     [Fact]

@@ -1,5 +1,6 @@
 using Garius.Api.Infrastructure.Authorization;
 using Garius.Api.Infrastructure.Errors;
+using Garius.Api.Infrastructure.Validation;
 using Garius.Core.Machine;
 
 // O identificador `Permissions`, aqui dentro, resolveria para o NAMESPACE
@@ -72,7 +73,12 @@ public static class MachineEndpoints
     /// </summary>
     private static void MapClientAdministration(IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/machine").WithTags("Machine");
+        // Ver AuthEndpoints: a validação é automática para todo request que tenha validator.
+        //
+        // Note que o POST /auth/token (mapeado FORA deste grupo, em MapTokenEndpoint) NÃO é
+        // coberto — e é deliberado: ele segue a RFC 6749, cujos erros saem como
+        // { "error": "invalid_client" }, não como o ProblemDetails da API. Ver MachineValidators.
+        var group = app.MapGroup("/machine").WithTags("Machine").ValidateRequests();
 
         // --- clients OAuth ---
 

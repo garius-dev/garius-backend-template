@@ -498,6 +498,7 @@ public sealed class ProductService(AppDbContext db)
 
 ```csharp
 using Garius.Api.Infrastructure.Errors;
+using Garius.Api.Infrastructure.Validation;
 
 namespace Garius.Api.Features.Products;
 
@@ -505,7 +506,9 @@ public static class ProductEndpoints
 {
     public static void MapProductEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/products").WithTags("Products");
+        // ValidateRequests: todo endpoint deste grupo cujo request tenha um
+        // AbstractValidator<T> é validado ANTES do handler. Ver "Validação", abaixo.
+        var group = app.MapGroup("/products").WithTags("Products").ValidateRequests();
 
         group.MapGet("/{id:guid}", async (
             Guid id,
@@ -546,6 +549,68 @@ builder.Services.AddScoped<ProductService>();
 // ...
 app.MapProductEndpoints();
 ```
+
+### Validação
+
+> ⚠️ **Em Minimal API, `[Required]` e `[MaxLength]` NÃO fazem nada.** Não existe o `[ApiController]` do MVC, que era quem ligava a validação automática das Data Annotations. Decorar o record com elas é **decoração**: *parece* proteger, e não protege. Esta seção é o que ocupa esse lugar — e é **obrigatória**, não opcional.
+
+O contrato é **uma coisa só**: crie um `AbstractValidator<SeuRequest>` ao lado do endpoint. Ele é descoberto, registrado e aplicado sozinho — **não há passo dois, e não há chamada para esquecer**.
+
+```csharp
+// src/Garius.Api/Features/Products/ProductValidators.cs
+public sealed class CreateProductRequestValidator : AbstractValidator<CreateProductRequest>
+{
+    public CreateProductRequestValidator()
+    {
+        RuleFor(x => x.Name).NotEmpty().MaximumLength(200);
+        RuleFor(x => x.Price).GreaterThan(0);
+    }
+}
+```
+
+Um corpo inválido nem chega ao handler — a resposta é **400 no contrato da API**, com os erros **por campo** e **todos de uma vez** (é o que o front usa para pintar de vermelho os dois campos, em vez de um por vez):
+
+```json
+{
+  "code": "validation.failed",
+  "traceId": "86e0f207...",
+  "errors": {
+    "name":  ["'Name' não pode ser vazio."],
+    "price": ["'Price' deve ser maior que 0."]
+  }
+}
+```
+
+#### Validar um FK: a regra vive UMA vez
+
+Vários endpoints recebem o mesmo `ProductId` — criar pedido, adicionar item, aplicar desconto. Todos precisam da mesma pergunta: *existe? está ativo? é do meu tenant?* Se cada validator escrever isso à mão, é questão de tempo até um endpoint novo — escrito seis meses depois, com pressa — **esquecer**. E o esquecimento não quebra nada na hora: deixa entrar um FK órfão, ou pior, um id de **outro tenant**.
+
+Por isso a regra é **uma extensão reutilizável**:
+
+```csharp
+public sealed class CreateOrderValidator : AbstractValidator<CreateOrderRequest>
+{
+    public CreateOrderValidator(AppDbContext db)          // o DbContext é injetado
+    {
+        RuleFor(x => x.ProductId).MustExist<CreateOrderRequest, Product>(db, "Produto");
+        RuleFor(x => x.Quantity).GreaterThan(0);
+    }
+}
+```
+
+`MustExist` parece checar só existência — mas checa **as três coisas**, e é o `AppDbContext` que faz as outras duas de graça: o **query filter global** já aplica `Enabled = true` e o `TenantId` corrente em toda consulta. Um registro apagado, ou de outro tenant, **simplesmente não existe** para essa query. É seguro por construção — não há como escrever a regra e esquecer do tenant.
+
+> A mensagem é a **mesma** para "não existe", "foi apagado" e "é de outro tenant". Distinguir os três daria um **oráculo**: o atacante descobriria quais ids existem em outros tenants variando o palpite.
+
+#### O que **não** vai no validator
+
+- **Autorização** (*"esse usuário pode?"*) — é `.RequirePermission(...)`.
+- **Regra de negócio com estado** (*"esse cliente tem crédito?"*) — é o service, devolvendo `Result.Failure`.
+- **Qualquer coisa que vire oráculo** — validar que "o e-mail existe" no login destruiria, pela porta dos fundos, a defesa contra enumeração de contas.
+
+#### Onde o filtro roda (e por que importa)
+
+**Depois da autorização.** Um anônimo leva **401 antes** de qualquer validator rodar. Não é preciosismo de status: validators podem **ir ao banco** (`MustExist`), e validar antes de autorizar transformaria a validação num vetor de DoS — consultas gratuitas, sem autenticação.
 
 ### Uma entidade
 

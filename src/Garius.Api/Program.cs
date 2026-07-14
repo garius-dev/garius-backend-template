@@ -16,6 +16,7 @@ using Garius.Api.Infrastructure.Logging;
 using Garius.Api.Infrastructure.Networking;
 using Garius.Api.Infrastructure.RateLimiting;
 using Garius.Api.Infrastructure.Security;
+using Garius.Api.Infrastructure.Validation;
 using Garius.Core.Results;
 using Garius.Core.Security;
 using Garius.Infrastructure.Caching;
@@ -137,6 +138,16 @@ builder.Services.AddCsrfProtection(builder.Environment);
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<MachineAuthService>();
 
+// VALIDAÇÃO DE REQUEST. Descobre todo AbstractValidator<T> deste assembly e o registra.
+//
+// ⚠️ Em Minimal API, Data Annotations ([Required], [MaxLength]) NÃO fazem nada — não existe o
+// [ApiController] do MVC, que era quem ligava a validação automática. Sem este registro, um
+// corpo `{}` chega ao handler com os campos nulos, e o que era erro do CLIENTE vira 500.
+//
+// O filtro é aplicado a todo endpoint cujo request tenha validator (ver ValidateRequests, lá
+// embaixo): não há uma chamada por endpoint para alguém esquecer.
+builder.Services.AddRequestValidation(Assembly.GetExecutingAssembly());
+
 // Rate limit por IP REAL, com contadores NO REDIS.
 //
 // No Redis, e não em memória (que é o que o RateLimiter nativo do .NET faz), porque com N
@@ -257,6 +268,7 @@ if (!app.Environment.IsProduction())
 {
     app.MapTestEndpoints();
 }
+
 
 // ONDE a aplicação está escutando.
 //
