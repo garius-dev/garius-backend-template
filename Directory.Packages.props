@@ -55,6 +55,25 @@
   <ItemGroup Label="Redis / Data Protection">
     <PackageVersion Include="StackExchange.Redis" Version="3.0.17" />
     <PackageVersion Include="Microsoft.AspNetCore.DataProtection.StackExchangeRedis" Version="10.0.9" />
+
+    <!--
+      Pin transitivo de segurança. O DataProtection (acima) arrasta
+      System.Security.Cryptography.Xml 10.0.9, que tem vulnerabilidade HIGH
+      (GHSA-mmjf-rqrv-855v e outras — várias CVEs de parsing de XML assinado).
+
+      Como o build audita CVE e trata NU1903 como ERRO, a 10.0.9 QUEBRA o build — e o
+      CentralPackageTransitivePinningEnabled (ver PropertyGroup no topo) faz esta linha
+      valer também para a dependência transitiva. Subir para 10.0.10 (a corrigida) sem
+      tocar no DataProtection.
+
+      ⚠️ Isto foi descoberto DERIVANDO uma app com o derive.ps1: o restore limpo da app
+      nova disparou a auditoria, enquanto o template — com o pacote já em cache — passava.
+      É o mesmo motivo pelo qual o `dotnet clean` é obrigatório antes de dar algo por
+      pronto: cache esconde falha de restore.
+
+      Remover quando o DataProtection passar a trazer a 10.0.10+ por conta própria.
+    -->
+    <PackageVersion Include="System.Security.Cryptography.Xml" Version="10.0.10" />
   </ItemGroup>
 
   <ItemGroup Label="Background jobs">
