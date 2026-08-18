@@ -1,0 +1,167 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "garius.fullname" . }}
+  labels:
+    {{- include "garius.labels" . | nindent 4 }}
+spec:
+  # Sem `replicas` quando o HPA está ligado — e isso NÃO é um esquecimento.
+  #
+  # Se o Deployment declarar réplicas e o HPA também, os dois brigam: o Helm
+  # reverte para o valor do chart a cada `upgrade`, o HPA escala de volta, e o
+  # cluster fica oscilando entre os dois números a cada deploy.
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "garius.selectorLabels" . | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # maxUnavailable: 0 — nenhuma réplica sai antes de a substituta estar PRONTA.
+      #
+      # É o que torna o deploy sem downtime possível. Junto com o readiness que
+      # reprova no SIGTERM (ver ShutdownState) e o preStop abaixo, fecha a janela
+      # em que o balanceador mandaria tráfego para um pod que está encerrando.
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        {{- include "garius.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Força o rollout quando só a configuração muda. Sem isto, um `helm upgrade`
+        # que altera apenas um valor de env não recria pod nenhum — e a mudança
+        # simplesmente não acontece, em silêncio.
+        checksum/config: {{ toYaml .Values.env | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "garius.serviceAccountName" . }}
+
+      # ⚠️ ESTE NÚMERO TEM DE SER MAIOR que preStop + ShutdownTimeout.
+      # Ver o bloco `lifecycle` no values.yaml — a conta está explicada lá.
+      terminationGracePeriodSeconds: {{ .Values.lifecycle.terminationGracePeriodSeconds }}
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1654
+        fsGroup: 1654
+
+      volumes:
+        {{- include "garius.volumes" . | nindent 8 }}
+
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      {{- if .Values.topologySpread.enabled }}
+      # Espalha as réplicas entre nós. Sem isto, o scheduler pode empilhar todas
+      # num nó só — e perder esse nó derruba a aplicação inteira, com N réplicas
+      # "no ar".
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: {{ .Values.topologySpread.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              {{- include "garius.selectorLabels" . | nindent 14 }}
+      {{- end }}
+
+      containers:
+        - name: api
+          image: {{ include "garius.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+
+          securityContext:
+            {{- include "garius.containerSecurityContext" . | nindent 12 }}
+
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          env:
+            {{- include "garius.commonEnv" . | nindent 12 }}
+            # O tempo de drenagem da aplicação vem DAQUI, não do appsettings: ele
+            # precisa casar com o terminationGracePeriodSeconds acima, e manter os
+            # dois números em arquivos diferentes é garantir que um deles fique
+            # desatualizado.
+            - name: Host__ShutdownTimeoutSeconds
+              value: {{ .Values.lifecycle.shutdownTimeoutSeconds | quote }}
+
+          volumeMounts:
+            {{- include "garius.volumeMounts" . | nindent 12 }}
+
+          # ─────────────────────────────────────────────────────────────────
+          # AS TRÊS PROBES. Efeitos diferentes — ver values.yaml.
+          # ─────────────────────────────────────────────────────────────────
+
+          # Já subiu? Enquanto isto não passa, o liveness NEM É CHAMADO. É o que
+          # impede um boot lento (Secret Manager, Redis, EF) de ser confundido
+          # com processo travado.
+          startupProbe:
+            httpGet:
+              path: /health/startup
+              port: http
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+
+          # Vivo? Reprovar aqui REINICIA o container.
+          #
+          # ⚠️ Aponta para /health/live, que NÃO checa dependências — de propósito.
+          # Um liveness que checasse o Postgres transformaria uma queda do banco
+          # num restart loop de toda a frota, e o CrashLoopBackOff atrasaria a
+          # recuperação mesmo depois de o banco voltar.
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+
+          # Pronto para tráfego? Reprovar aqui TIRA DO BALANCEAMENTO (não reinicia).
+          # É este que a aplicação faz reprovar no SIGTERM.
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+
+          lifecycle:
+            preStop:
+              # A PAUSA QUE FECHA A CORRIDA DO ORQUESTRADOR.
+              #
+              # O Kubernetes remove o endpoint do Service EM PARALELO ao SIGTERM, e
+              # essa remoção leva segundos para propagar pelo kube-proxy e pelo
+              # ingress. Sem esta pausa, o pod começa a encerrar enquanto o
+              # balanceador ainda manda tráfego — e cada requisição dessas é um erro
+              # para um cliente real, em TODO deploy.
+              #
+              # ⚠️ `sleep` NATIVO, e não `exec: [/bin/sleep]`. A imagem de runtime é
+              # chiseled: ela NÃO TEM shell nem coreutils, então `/bin/sleep` não
+              # existe. Um preStop com exec falharia em silêncio (o Kubernetes só
+              # loga um evento) e a corrida voltaria — a defesa pareceria estar lá,
+              # configurada e visível no manifesto, sem fazer nada.
+              #
+              # Verificado: `docker run --entrypoint /bin/sleep <imagem>-chiseled`
+              # responde "stat /bin/sleep: no such file or directory".
+              #
+              # A action `sleep` exige Kubernetes 1.29+. Em cluster mais antigo, a
+              # saída é voltar para a imagem não-chiseled e usar exec — ver README.
+              sleep:
+                seconds: {{ .Values.lifecycle.preStopSeconds }}
+
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

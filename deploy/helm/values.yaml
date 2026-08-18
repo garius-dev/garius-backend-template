@@ -1,0 +1,205 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Valores do chart. Este é o arquivo que você edita.
+#
+# Os defaults aqui são de PRODUÇÃO, não de brincadeira: réplicas > 1, limites de
+# recurso definidos, sistema de arquivos somente-leitura. Um chart cujo default é
+# inseguro vira o padrão de quem só copia e cola.
+# ─────────────────────────────────────────────────────────────────────────────
+
+image:
+  repository: gariustech/gariustech-backend-template
+
+  # ⚠️ NÃO EDITE AQUI. A versão vem do `--set image.tag=` no deploy, pelo mesmo
+  # motivo do APP_VER no compose: duas fontes para a mesma informação sempre viram
+  # uma delas desatualizada, e o sintoma é silencioso — o cluster puxa uma tag que
+  # já tem em cache e sobe o binário ANTIGO, sem erro nenhum.
+  tag: ""
+
+  # IfNotPresent + tag imutável é o par correto. `Always` com tag fixa esconde
+  # rollback: você volta a versão e o nó puxa a imagem nova de novo.
+  pullPolicy: IfNotPresent
+
+# TRÊS réplicas, não uma.
+#
+# Duas seriam o mínimo para não cair durante um deploy; três é o mínimo para
+# sobreviver a um deploy DURANTE uma queda de nó — que é o cenário que o
+# PodDisruptionBudget abaixo assume.
+replicaCount: 3
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ENCERRAMENTO GRACIOSO
+#
+# ⚠️ ESTES TRÊS NÚMEROS SÃO UM CONJUNTO. A conta precisa fechar:
+#
+#     preStopSeconds + shutdownTimeoutSeconds < terminationGracePeriodSeconds
+#             5      +          30            <           45
+#
+# Se a soma passar do grace period, o Kubernetes manda SIGKILL no meio da
+# drenagem: requisição em andamento morre, job do Hangfire morre no meio — e todo
+# o mecanismo do ShutdownState (ver o código) é desperdiçado.
+#
+# O preStop existe porque o Kubernetes remove o endpoint do Service EM PARALELO ao
+# SIGTERM, e essa remoção leva segundos para propagar pelo kube-proxy e pelo
+# ingress. Sem essa pausa, o pod para de aceitar conexões enquanto o balanceador
+# ainda manda tráfego.
+# ─────────────────────────────────────────────────────────────────────────────
+lifecycle:
+  preStopSeconds: 5
+  shutdownTimeoutSeconds: 30
+  terminationGracePeriodSeconds: 45
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PROBES
+#
+# As três têm efeitos DIFERENTES, e trocá-las tem consequência severa:
+#
+#   startup   -> o orquestrador ESPERA          (não mata durante um boot lento)
+#   liveness  -> REINICIA o container
+#   readiness -> TIRA do balanceamento          (não reinicia)
+#
+# O startup é o que protege o boot: enquanto ele não passa, o liveness nem é
+# chamado. Sem ele, um boot lento (Secret Manager, Redis, EF) é confundido com
+# processo travado e o pod morre em loop sem nunca chegar a subir.
+# ─────────────────────────────────────────────────────────────────────────────
+probes:
+  startup:
+    # 30 × 2s = 60 segundos de tolerância para subir. Generoso de propósito: o
+    # custo de esperar demais é um deploy lento; o de esperar de menos é
+    # CrashLoopBackOff num pod que estava saudável.
+    periodSeconds: 2
+    failureThreshold: 30
+
+  liveness:
+    periodSeconds: 10
+    failureThreshold: 3
+    timeoutSeconds: 3
+
+  readiness:
+    # 3 × 5s = ~15s para sair do balanceamento quando adoece de verdade.
+    # A resposta é cacheada por 3s na aplicação (ver ReadinessCache) — o cache é
+    # mais curto que o período, então ele absorve rajada sem atrasar a detecção.
+    periodSeconds: 5
+    failureThreshold: 3
+    timeoutSeconds: 3
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RECURSOS
+#
+# `requests` NÃO é opcional: sem ele o scheduler não tem o que respeitar e o HPA
+# não funciona (ele calcula a utilização como uso/request — sem request, não há
+# porcentagem).
+#
+# ⚠️ Sem `limits.cpu`, de propósito. CPU é comprimível: o limite não protege
+# ninguém e causa THROTTLING silencioso — a aplicação fica lenta sem estourar
+# nada, e o sintoma (latência subindo sem erro) é dos mais difíceis de rastrear.
+# Memória TEM limite, porque ela não é comprimível: sem teto, um vazamento derruba
+# o NÓ inteiro em vez de só o pod.
+# ─────────────────────────────────────────────────────────────────────────────
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+  # ⚠️ A JANELA DE SCALE-DOWN É LONGA DE PROPÓSITO (5 min).
+  #
+  # Sem ela o HPA oscila: sobe no pico, desce em seguida, sobe de novo — e cada
+  # descida derruba pods que estavam servindo. Subir é barato e rápido; descer
+  # deve ser lento e relutante.
+  scaleDownStabilizationSeconds: 300
+
+# PodDisruptionBudget: quantos pods precisam continuar de pé durante uma
+# manutenção voluntária (drenar um nó, atualizar o cluster).
+#
+# SEM ISTO, `kubectl drain` pode derrubar TODAS as réplicas de uma vez — e a
+# "alta disponibilidade" some no momento mais previsível que existe, que é a
+# manutenção programada.
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+# Espalha as réplicas entre nós. Sem isto o scheduler pode empilhar as três no
+# mesmo nó, e perder esse nó derruba a aplicação inteira — com três réplicas no ar.
+topologySpread:
+  enabled: true
+  # ScheduleAnyway, não DoNotSchedule: num cluster pequeno (um ou dois nós), a
+  # regra estrita impediria o pod de ser agendado. Preferência, não exigência.
+  whenUnsatisfiable: ScheduleAnyway
+
+# Rede: default DENY, liberando só o necessário.
+#
+# ⚠️ DESLIGADO por padrão, e isso é uma escolha honesta: uma NetworkPolicy errada
+# derruba a aplicação de um jeito confuso (o sintoma é timeout de DNS, que não
+# parece problema de rede). Ligue depois que a app estiver no ar, e confira as
+# portas de egress abaixo — elas precisam bater com a SUA infraestrutura.
+networkPolicy:
+  enabled: false
+
+  # De qual namespace o tráfego de entrada é aceito. O default assume o padrão
+  # do ingress-nginx.
+  ingressNamespaceSelector:
+    kubernetes.io/metadata.name: ingress-nginx
+
+  # Para onde a aplicação pode falar dentro do cluster.
+  egressPorts:
+    - port: 5432      # Postgres
+      protocol: TCP
+    - port: 6379      # Redis
+      protocol: TCP
+    - port: 4317      # OTLP (traços e métricas)
+      protocol: TCP
+    - port: 3100      # Loki
+      protocol: TCP
+
+  # HTTPS para fora: o Google Secret Manager. Sem isto a aplicação não sobe.
+  allowExternalHttps: true
+
+ingress:
+  enabled: true
+  className: nginx
+  host: api.exemplo.com
+  tlsSecretName: garius-api-tls
+  annotations: {}
+
+# Configuração da aplicação. Vira variáveis de ambiente (com `__` como separador
+# de seção, que é a convenção do .NET).
+#
+# ⚠️ SEGREDO NÃO ENTRA AQUI. Senha de banco, chaves de criptografia e a do JWT vêm
+# do Google Secret Manager — o que este chart precisa é só da credencial que
+# destrava o Secret Manager (ver `gcpServiceAccount` abaixo). É a regra 5 do
+# README, e ela não muda por estarmos em Kubernetes.
+env:
+  ASPNETCORE_ENVIRONMENT: Production
+  DOCKER_RUN: "true"
+
+# O Secret (criado FORA deste chart) com a service account do Google.
+#
+# Criado à mão, de propósito: um segredo versionado num chart é um segredo
+# vazado. Crie com
+#   kubectl create secret generic garius-gcp-sa --from-file=key.json=<arquivo>
+gcpServiceAccount:
+  secretName: garius-gcp-sa
+  key: key.json
+
+# A migração roda como Job, ANTES da API subir. Ver templates/migration-job.yaml.
+migration:
+  enabled: true
+  # Quantas vezes o Job tenta antes de falhar o deploy. Baixo de propósito: uma
+  # migração que falha duas vezes vai falhar na terceira, e insistir só atrasa a
+  # descoberta.
+  backoffLimit: 1
+
+serviceAccount:
+  create: true
+  name: ""
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

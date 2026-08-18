@@ -94,7 +94,10 @@ var naming = builder.Services.AddPersistence(
     builder.Environment,
     Assembly.GetExecutingAssembly(),
     migrateOnly,
-    onHostResolved: LogHostResolved);
+    onHostResolved: LogHostResolved,
+    // Warning, não erro: é um alerta de CAPACIDADE sobre uma estimativa (quantas réplicas o
+    // cluster vai criar), não uma configuração inválida. Ver WarnIfConnectionCeilingIsNear.
+    onCapacityWarning: message => Log.Warning("{Message}", message));
 
 if (migrateOnly)
 {
@@ -259,6 +262,16 @@ app.UseAuthentication();
 app.UseCsrfProtection();
 
 app.UseAuthorization();
+
+// 9b. RATE LIMIT POR IDENTIDADE — a segunda dimensão, e ela precisa vir AQUI.
+//
+// A camada por IP (passo 6) fica lá na frente porque é a defesa contra VOLUME e tem de ser
+// barata. Esta precisa saber QUEM está chamando, o que só existe depois da autenticação e da
+// autorização — e o custo é aceitável porque só chega aqui quem já passou pelas duas.
+//
+// Limite só por IP erra dos dois lados: pune quem está atrás de CGNAT e não contém quem tem um
+// /64 de IPv6 sobrando. Ver IdentityRateLimitMiddleware.
+app.UseMiddleware<IdentityRateLimitMiddleware>();
 
 // 10. IDEMPOTÊNCIA. Depois da autorização, de propósito.
 //

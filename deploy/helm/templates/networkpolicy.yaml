@@ -1,0 +1,71 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "garius.fullname" . }}
+  labels:
+    {{- include "garius.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "garius.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Só o ingress controller fala com a aplicação. Sem isto, QUALQUER pod do
+    # cluster alcança a API pela rede interna — e o rate limit, o CSRF e o IP real
+    # (que dependem de o tráfego passar pela borda) são todos contornados.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.ingressNamespaceSelector | nindent 14 }}
+      ports:
+        - port: 8080
+          protocol: TCP
+
+  egress:
+    # DNS. Primeiro da lista porque é o que mais se esquece: sem ele a aplicação
+    # não resolve NEM o nome do Postgres, e o sintoma é um "No such host is known"
+    # que não parece ter nada a ver com NetworkPolicy.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    {{- with .Values.networkPolicy.egressPorts }}
+    # Postgres, Redis, e o que mais a aplicação precise alcançar (o collector
+    # OTLP, o Loki, o Secret Manager). Default DENY: o que não estiver aqui é
+    # bloqueado.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+
+    {{- if .Values.networkPolicy.allowExternalHttps }}
+    # HTTPS para fora do cluster: o Google Secret Manager mora lá. Sem esta regra
+    # a aplicação NÃO SOBE — ela falha fechada ao não conseguir ler os segredos,
+    # que é o comportamento correto, mas o diagnóstico é confuso.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              # Não deixa a aplicação alcançar a rede interna do cluster nem
+              # endereços privados: se ela for comprometida, isso limita o
+              # movimento lateral.
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - port: 443
+          protocol: TCP
+    {{- end }}
+{{- end }}
