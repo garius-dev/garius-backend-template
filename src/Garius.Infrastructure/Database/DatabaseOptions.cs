@@ -47,4 +47,21 @@ public sealed class DatabaseOptions
     public int MaxPoolSize { get; set; } = 20;
 
     public int CommandTimeoutSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// Quantas vezes retentar uma operação que falhou por motivo <b>transitório</b> (failover
+    /// do banco, queda de rede). Ver <c>PersistenceExtensions</c>.
+    ///
+    /// <para>
+    /// Três é o suficiente para atravessar um failover típico sem transformar uma
+    /// indisponibilidade real numa espera longa: com o backoff do Npgsql, o cliente que
+    /// espera por um banco que não vai voltar desiste em segundos, não em minutos.
+    /// </para>
+    /// </summary>
+    public int MaxRetryCount { get; set; } = 3;
+
+    /// <summary>
+    /// Teto do intervalo entre tentativas. O Npgsql aplica backoff exponencial até este valor.
+    /// </summary>
+    public int MaxRetryDelaySeconds { get; set; } = 5;
 }

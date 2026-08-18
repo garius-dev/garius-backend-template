@@ -39,6 +39,44 @@ public sealed class OutboxProcessor(
     /// </summary>
     public async Task ProcessAsync(CancellationToken cancellationToken = default)
     {
+        // ⚠️ A EXECUTION STRATEGY NÃO É OPCIONAL AQUI — e a razão é sutil.
+        //
+        // O DbContext liga EnableRetryOnFailure (resiliência a failover de banco, ver
+        // PersistenceExtensions). Com o retry ligado, o EF PROÍBE abrir transação à mão: ele
+        // não tem como reexecutar um bloco que começou fora do controle dele, e recusa com
+        // "The configured execution strategy 'NpgsqlRetryingExecutionStrategy' does not
+        // support user-initiated transactions".
+        //
+        // Pedir a strategy e rodar a transação DENTRO dela devolve esse controle: se a conexão
+        // cair no meio, o EF reexecuta o delegate INTEIRO — nova transação, novo SELECT ... FOR
+        // UPDATE, novo lote.
+        //
+        // Reexecutar é seguro porque o corpo relê tudo do banco: o lote não é estado carregado
+        // de fora, ele vem do próprio SELECT. E como o Attempts++ só vale se a transação
+        // commitar, uma tentativa que falhou no meio não deixa contador inflado para trás.
+        var strategy = db.Database.CreateExecutionStrategy();
+
+        await strategy.ExecuteAsync(() => ProcessBatchAsync(cancellationToken));
+    }
+
+    /// <summary>
+    /// Uma tentativa de rodada. Pode ser <b>reexecutado</b> pela execution strategy — ver
+    /// <see cref="ProcessAsync"/>.
+    /// </summary>
+    private async Task ProcessBatchAsync(CancellationToken cancellationToken)
+    {
+        // ⚠️ LIMPAR O CHANGE TRACKER É O QUE TORNA A REEXECUÇÃO CORRETA.
+        //
+        // Se a tentativa anterior falhou DEPOIS de incrementar Attempts (mas antes de
+        // commitar), aquelas entidades continuam no tracker, modificadas. Sem esta linha, a
+        // nova tentativa carregaria o incremento antigo e somaria o novo por cima: uma
+        // mensagem contaria DUAS tentativas por uma falha de infraestrutura que não é culpa
+        // dela — e chegaria a MaxAttempts na metade do tempo, sendo descartada cedo demais.
+        //
+        // A falha seria rara (só sob failover) e silenciosa (a mensagem só some), que é a
+        // combinação mais difícil de diagnosticar depois.
+        db.ChangeTracker.Clear();
+
         // Transação explícita: os locks do FOR UPDATE só valem dentro dela.
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
