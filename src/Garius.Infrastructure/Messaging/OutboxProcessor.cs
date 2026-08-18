@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Garius.Core.Messaging;
 using Garius.Infrastructure.Database;
 using Microsoft.EntityFrameworkCore;
@@ -16,13 +16,19 @@ public sealed class OutboxProcessor(
     IServiceProvider services,
     EventTypeRegistry registry,
     TimeProvider timeProvider,
+    OutboxOptions options,
     ILogger<OutboxProcessor> logger)
 {
     /// <summary>
     /// Quantas mensagens por rodada. Um lote grande seguraria a transação (e os locks) por
     /// muito tempo; um lote pequeno faria o job nunca alcançar a fila sob carga.
+    ///
+    /// <para>
+    /// Configurável porque define um <b>teto de throughput</b>: com o job de minuto em minuto,
+    /// são <c>BatchSize × 60</c> mensagens por hora, no máximo. Ver <see cref="OutboxOptions"/>.
+    /// </para>
     /// </summary>
-    private const int BatchSize = 100;
+    private int BatchSize => options.BatchSize;
 
     /// <summary>
     /// Uma rodada.
@@ -83,8 +89,13 @@ public sealed class OutboxProcessor(
         // ⚠️ FromSqlRaw IGNORA os global query filters do EF — inclusive o de soft delete.
         // Por isso o `Enabled` entra explicitamente no WHERE. Esquecê-lo faria o drenador
         // processar mensagens logicamente apagadas.
+        //
+        // FromSql (interpolado), e não FromSqlRaw: o EF transforma cada {valor} em PARÂMETRO
+        // do comando, não em concatenação de string. Com o BatchSize vindo de configuração,
+        // o FromSqlRaw seria injeção de SQL por construção — e o analisador do EF (EF1002)
+        // recusa o build, com razão.
         var pending = await db.OutboxMessages
-            .FromSqlRaw(
+            .FromSql(
                 $"""
                  SELECT * FROM outbox_messages
                  WHERE "ProcessedAt" IS NULL

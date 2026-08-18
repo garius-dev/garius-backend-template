@@ -1,5 +1,6 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using Garius.Core.Messaging;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Garius.Infrastructure.Messaging;
@@ -46,13 +47,25 @@ public static class MessagingExtensions
     /// <summary>
     /// Registra o outbox. Chame <b>uma vez</b>, no <c>Program.cs</c>.
     /// </summary>
-    public static IServiceCollection AddOutbox(this IServiceCollection services)
+    /// <param name="services">O contêiner.</param>
+    /// <param name="configuration">
+    /// De onde sai a seção <c>Outbox</c> (tamanho do lote, limiar de fila parada). Opcional:
+    /// sem ela valem os defaults de <see cref="OutboxOptions"/>.
+    /// </param>
+    public static IServiceCollection AddOutbox(
+        this IServiceCollection services,
+        IConfiguration? configuration = null)
     {
         ArgumentNullException.ThrowIfNull(services);
 
+        var options = new OutboxOptions();
+        configuration?.GetSection(OutboxOptions.SectionName).Bind(options);
+
+        services.AddSingleton(options);
         services.AddSingleton(Registry);
         services.AddScoped<IOutbox, Outbox>();
         services.AddScoped<OutboxProcessor>();
+        services.AddScoped<OutboxHealthCheck>();
 
         return services;
     }

@@ -1,7 +1,8 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Garius.Infrastructure.Database;
+using Garius.Infrastructure.Messaging;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using StackExchange.Redis;
@@ -103,6 +104,14 @@ internal static class HealthSetup
             sp => sp.GetRequiredService<IConnectionMultiplexer>(),
             name: "redis",
             tags: [ReadyTag]);
+
+        // O outbox: fila andando? Ver OutboxHealthCheck.
+        //
+        // ⚠️ DiagnosticTag, e NÃO ReadyTag. Um outbox atrasado não impede servir HTTP —
+        // tirar o pod do balanceamento por causa disso transformaria um atraso de background
+        // numa indisponibilidade. E como todas as réplicas compartilham a MESMA fila, elas
+        // sairiam todas ao mesmo tempo. O alerta sai do /health/detail.
+        builder.AddCheck<OutboxHealthCheck>("outbox", tags: [DiagnosticTag]);
 
         return services;
     }
