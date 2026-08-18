@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Text.Json;
 using Garius.Api.Infrastructure.Errors;
 using Garius.Api.Infrastructure.Networking;

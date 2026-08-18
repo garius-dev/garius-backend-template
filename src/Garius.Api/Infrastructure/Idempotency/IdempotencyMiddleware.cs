@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using System.Text.Json;
 using Garius.Api.Infrastructure.Errors;
 using Garius.Infrastructure.Idempotency;

@@ -1,4 +1,4 @@
-﻿using Garius.Core.Messaging;
+using Garius.Core.Messaging;
 using Garius.Infrastructure.Database;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;

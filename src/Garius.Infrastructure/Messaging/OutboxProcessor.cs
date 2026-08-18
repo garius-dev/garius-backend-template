@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using Garius.Core.Messaging;
 using Garius.Infrastructure.Database;
 using Microsoft.EntityFrameworkCore;

@@ -1,4 +1,4 @@
-﻿# Garius Backend Template
+# Garius Backend Template
 
 Template backend .NET 10 para APIs de produção. Foco em segurança e integração limpa com o frontend, sem overengineering.
 
