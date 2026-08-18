@@ -129,7 +129,8 @@
       "description": "Próximos passos",
       "manualInstructions": [
         {
-          "text": "1. LEIA o README.md e o CLAUDE.md. As decisões vêm com o porquê — se algo parecer redundante, provavelmente é uma armadilha já paga.\n2. Crie o secret no Google Secret Manager (README, 'Derivando uma nova aplicação', passo 2). A aplicação NÃO SOBE sem as chaves: é fail-fast deliberado.\n3. MIGRATE_ONLY=true dotnet run --project src/<SuaApp>.Api   (cria banco, roles, grants e migrations)\n4. dotnet run --project src/<SuaApp>.Api"
+          "text": "1. LEIA o README.md e o CLAUDE.md. As decisões vêm com o porquê — se algo parecer redundante, provavelmente é uma armadilha já paga.\n2. PREENCHA o REGRAS-DA-APLICACAO.md com as regras DESTA aplicacao (autenticacao real, papeis, dominio, integracoes). Sem ele, o template vira a unica especificacao que existe — e features legitimas passam a ser recusadas por estarem 'fora das regras'. Um teste FALHA enquanto ele estiver em branco.
+3. Crie o secret no Google Secret Manager (README, 'Derivando uma nova aplicação'). A aplicação NÃO SOBE sem as chaves: é fail-fast deliberado.\n4. MIGRATE_ONLY=true dotnet run --project src/<SuaApp>.Api   (cria banco, roles, grants e migrations)\n5. dotnet run --project src/<SuaApp>.Api"
         }
       ],
       "continueOnError": true
