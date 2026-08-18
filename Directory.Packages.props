@@ -106,6 +106,31 @@
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.13.0" />
     <PackageVersion Include="Testcontainers.Redis" Version="4.13.0" />
     <PackageVersion Include="Shouldly" Version="4.3.0" />
+
+    <!--
+      FakeTimeProvider. Testar coisa com janela de tempo (o cache do readiness, a expiração
+      de token) esperando de VERDADE deixa a suíte lenta e instável — um teste que dorme 3s
+      falha sozinho numa máquina carregada. Com o TimeProvider injetado, o tempo avança por
+      chamada de método e o teste é determinístico.
+    -->
+    <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.0.0" />
+
+    <!--
+      Pin transitivo de segurança. O Testcontainers usa SSH.NET (para o modo de execução
+      remota do Docker) e arrasta a 2025.1.0, que tem vulnerabilidade HIGH
+      (GHSA-q939-rpr3-3284).
+
+      Como o build audita CVE e trata NU1903 como ERRO, a 2025.1.0 QUEBRA o build — e o
+      CentralPackageTransitivePinningEnabled (ver PropertyGroup no topo) faz esta linha valer
+      também para a dependência transitiva.
+
+      ⚠️ É teste, não produção: o SSH.NET nunca vai para a imagem. Mas o build é estrito de
+      PROPÓSITO, e a alternativa (excluir NU1903 da auditoria) desligaria o alarme para
+      TODOS os pacotes, inclusive os de produção. Pinar é o conserto; suprimir é esconder.
+
+      Remover quando o Testcontainers passar a trazer uma versão já corrigida.
+    -->
+    <PackageVersion Include="SSH.NET" Version="2026.0.0" />
   </ItemGroup>
 
 </Project>
