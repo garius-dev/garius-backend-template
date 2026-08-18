@@ -1424,6 +1424,19 @@ As três probes têm efeitos diferentes, e **trocá-las tem consequência severa
 
 O readiness é **cacheado por 3 segundos** (`ReadinessCache`). Com N réplicas e um período de probe de poucos segundos, o health check sozinho faria dezenas de consultas por minuto ao Postgres e ao Redis — e quando o banco está sofrendo, que é quando o readiness importa, esse tráfego extra **piora** o problema que ele deveria só observar.
 
+> **Isto é testado de ponta a ponta.** `ShutdownE2ETests` sobe a aplicação **num container**,
+> dispara carga, manda um `SIGTERM` de verdade (`docker stop`) e afirma que **nenhuma
+> requisição se perde** — e que o `/health/ready` reprova *durante* a drenagem enquanto o que
+> já estava em voo é atendido.
+>
+> O teste é lento (~50s) e usa a **mesma imagem** do Dockerfile de produção. Está em collection
+> própria, com `Trait("Category", "EndToEnd")`, para poder ser isolado no CI:
+>
+> ```bash
+> dotnet test --filter "Category!=EndToEnd"     # a suíte rápida
+> dotnet test --filter "Category=EndToEnd"      # só os de ponta a ponta
+> ```
+
 #### Os tempos precisam fechar
 
 ```

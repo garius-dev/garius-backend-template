@@ -49,7 +49,7 @@ Seja honesto sobre o custo antes de começar:
 
 | Item | Custo do teste | Observação |
 |---|---|---|
-| 1 Shutdown | **Alto** | Exige carga + `SIGTERM` + verificar zero erro. Infraestrutura de teste que não existe hoje. |
+| 1 Shutdown | **Alto** — ✅ FEITO | Exigiu container (o `TestServer` e o `Process.Start` não servem). Ver `ShutdownE2ETests`. |
 | 2 EF retry | Médio | Testcontainers permite derrubar/subir o Postgres no meio. |
 | 3 OTel | Baixo | Exportador em memória, asserção sobre as activities. |
 | 4 Outbox | Baixo | Já há `DatabaseFixture`; inserir mensagem velha e checar o health. |
@@ -547,3 +547,27 @@ Registrado para que não vire discussão de novo:
 
 **Itens 1 a 4 são o corte para "pronto para produção pública em k8s".** Do 5 em diante é
 maturidade incremental, entregável em qualquer ordem.
+
+---
+
+## Adendo: o teste E2E de shutdown (2026-08-18)
+
+A única dívida que o plano deixou aberta foi **fechada**. Vale registrar o que ela ensinou,
+porque as três lições valem para o próximo teste desse tipo:
+
+**O `WebApplicationFactory` não serve.** O `TestServer` se descarta no `StopApplication()` — ele
+encerra de imediato, que é o comportamento que o item existe para evitar. Não há janela de
+drenagem para medir.
+
+**`Process.Start` + `CTRL_BREAK` não serve no Windows.** O sinal exige
+`CREATE_NEW_PROCESS_GROUP`, flag que o `ProcessStartInfo` não expõe. Medido: o processo seguia
+vivo após 30s.
+
+**Container serve.** `docker stop` manda SIGTERM com grace period — o que o Kubernetes faz. E
+usa a mesma imagem de produção.
+
+**A lição mais cara:** os três primeiros testes escritos passavam **mesmo com a defesa
+neutralizada**. Eles olhavam só o resultado final. Foi preciso um quarto, que observa o
+`/health/ready` **durante** a drenagem — com a defesa removida ele vê 65 respostas `OK`
+seguidas. Um teste de encerramento que não observa o instante intermediário não está medindo
+nada.
