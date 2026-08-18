@@ -261,7 +261,28 @@ Se a aplicação aceita esse header de **qualquer origem**, ela acredita que o r
 
 **E a Cloudflare?** É a camada de **fora** (internet → Traefik), e tem configuração própria — `Security:TrustCloudflareIps`, que já vem `true`. Ali o template usa o `CF-Connecting-IP`, validado contra os ranges publicados pela Cloudflare. O `TrustedProxies` cuida do salto **de dentro** (Traefik → container). São dois saltos, duas configurações.
 
-### 4. Decida a tenancy
+### 4. Registre as regras DA SUA aplicação
+
+Preencha o **`REGRAS-DA-APLICACAO.md`** — autenticação real, papéis, domínio, integrações.
+
+Isso não é burocracia, e o atrito que ele evita é concreto: sem esse arquivo, o único material que
+descreve o sistema é o README **do template**. Uma IA (ou uma pessoa nova) lê isso e conclui que o
+template é a especificação — e passa a recusar features perfeitamente legítimas por estarem "fora
+das regras".
+
+> **Caso real:** alguém derivou o template, pediu integração de login com o Google, e a IA recusou
+> citando o README. Google OAuth não viola **nenhuma** das 10 regras — o problema era que não havia
+> onde estivesse escrito que aquela aplicação usa Google.
+
+Um teste (`ApplicationRulesTests`) **falha** enquanto o arquivo estiver com os comentários de
+exemplo. Ele é ignorado no próprio template, onde o formulário em branco é o estado correto.
+
+> **A base é um ponto de partida, não um teto.** Adicionar provedores de autenticação, criar
+> entidades e permissões, apagar o que veio de exemplo e escrever as telas de administração é o uso
+> **esperado**. As 10 regras dizem *como* construir; elas não limitam *o que* construir.
+
+### 5. Decida a tenancy
+
 
 ```json
 "Tenancy": { "Mode": "SingleTenant" }   // ou "MultiTenant"
@@ -269,7 +290,7 @@ Se a aplicação aceita esse header de **qualquer origem**, ela acredita que o r
 
 **Alternar não muda o schema** — a coluna `TenantId` e o query filter existem nos dois modos. Muda apenas qual `ITenantResolver` é registrado. Você pode migrar de single para SaaS depois sem migration destrutiva.
 
-### 5. Rode
+### 6. Rode
 
 ```bash
 # cria banco, roles, grants e aplica migrations — e MORRE (exit 0)
