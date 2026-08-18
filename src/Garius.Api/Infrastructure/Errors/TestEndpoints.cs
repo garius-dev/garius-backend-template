@@ -19,6 +19,24 @@ internal static class TestEndpoints
         // declare o contrário. Estes existem só para exercitar o contrato de resposta.
         var group = app.MapGroup("/__test").ExcludeFromDescription().AllowAnonymous();
 
+        // ⚠️ EXISTE PARA UM TESTE SÓ, e sem ele esse teste não é possível.
+        //
+        // O teste de encerramento gracioso (ShutdownE2ETests) precisa de uma requisição que
+        // esteja EM VOO no instante do SIGTERM — é isso que ele prova que sobrevive. Com
+        // endpoints instantâneos não há como criar a sobreposição: a requisição termina antes
+        // de o sinal chegar, e o teste passaria sem exercitar a drenagem.
+        //
+        // O atraso é do CLIENTE (query string), não fixo, para o teste calibrá-lo sem
+        // recompilar. E o Task.Delay respeita o CancellationToken de propósito: se o host
+        // abortasse a requisição no shutdown, isto lançaria — que é exatamente a falha que se
+        // quer detectar.
+        group.MapGet("/slow", async (HttpContext http, int ms = 1000) =>
+        {
+            await Task.Delay(Math.Clamp(ms, 0, 30_000), http.RequestAborted);
+
+            return Results.Ok(new { completed = true, delayMs = ms });
+        });
+
         group.MapGet("/boom", IResult () =>
             throw new InvalidOperationException(
                 "segredo-que-nao-pode-vazar: connection string, host, usuário do banco..."));

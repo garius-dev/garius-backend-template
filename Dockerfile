@@ -74,7 +74,15 @@ RUN dotnet publish src/Garius.Api/Garius.Api.csproj \
 #      `kubectl debug` com um container efêmero, ou troque temporariamente para a
 #      variante não-chiseled.
 #
-# Se precisar de ICU (formatação por cultura) ou tzdata, use a variante `-extra`.
+# ⚠️ FALTA O KERBEROS, e isto aparece no log: ao subir, o Npgsql tenta carregar
+# `libgssapi_krb5.so.2` e registra "Cannot load library". É INOFENSIVO aqui —
+# a autenticação do Postgres neste template é por senha, e o Npgsql segue sem GSSAPI
+# —, mas o erro assusta quem lê o log pela primeira vez e some se você usar a
+# variante `-extra`.
+#
+# Só troque para `-extra` se realmente precisar: de Kerberos/GSSAPI, de ICU
+# (formatação por cultura) ou de tzdata. Ela é maior e traz de volta parte da
+# superfície que a chiseled corta.
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled@sha256:0839314d08bb65da369135389a5d8291f75ace587fbb0488f469eb92c62eef68 AS final
 WORKDIR /app
 
