@@ -38,10 +38,22 @@ coverage*.xml
 **/service-account*.json
 **/*-credentials.json
 
-# Diretórios de secrets montados no container
-**/secrets/*
-!**/secrets/*.example
-!**/secrets/.gitkeep
+# Diretórios de secrets montados no container.
+#
+# ⚠️ ESCOPADO AO docker/, e não `**/secrets/*`. A regra ampla também pegava
+# `src/*.Infrastructure/Secrets/` — a pasta de CÓDIGO do provedor do Google Secret
+# Manager — porque o Git no Windows compara sem diferenciar maiúsculas.
+#
+# O resultado: quatro arquivos .cs nunca foram versionados, e o repositório
+# publicado NÃO COMPILAVA. Quem clonasse recebia
+# `CS0234: namespace 'Secrets' does not exist`, num template cuja suíte estava
+# verde na máquina de quem o escreveu.
+#
+# Ao mexer aqui, prefira o caminho explícito: uma regra de ignore ampla demais
+# falha em silêncio, e o silêncio dela é o arquivo que ninguém percebe que sumiu.
+docker/*/apps/*/secrets/*
+!docker/*/apps/*/secrets/.gitkeep
+!docker/*/apps/*/secrets/*.example
 
 # Segredos locais
 .env
