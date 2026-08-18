@@ -1,0 +1,20 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "garius.fullname" . }}
+  labels:
+    {{- include "garius.labels" . | nindent 4 }}
+spec:
+  # Quantos pods precisam continuar de pé durante uma manutenção VOLUNTÁRIA
+  # (drenar um nó, atualizar o cluster, reequilibrar).
+  #
+  # ⚠️ SEM ISTO, `kubectl drain` pode derrubar TODAS as réplicas de uma vez. A
+  # "alta disponibilidade" desaparece no momento mais previsível que existe — a
+  # manutenção programada — e o operador que rodou o drain não recebe aviso
+  # nenhum: o comando simplesmente funciona.
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "garius.selectorLabels" . | nindent 6 }}
+{{- end }}

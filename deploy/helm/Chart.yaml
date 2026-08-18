@@ -1,0 +1,19 @@
+apiVersion: v2
+name: garius-api
+
+# ⚠️ O NOME ACIMA É RENOMEADO PELO `dotnet new`. Se ele ainda for `garius-api`,
+# você está no template — ver a seção de derivação no README.
+
+description: >-
+  API do template Garius: uma imagem, dois modos (MIGRATE_ONLY decide o papel),
+  com as três probes, encerramento gracioso e a migração como hook de pré-upgrade.
+
+type: application
+
+# A versão do CHART. Muda quando os manifestos mudam — não quando a aplicação muda.
+version: 0.1.0
+
+# A versão da APLICAÇÃO. É só o default: quem manda de verdade é o `--set image.tag`
+# do deploy, porque a versão tem UMA fonte (o argumento do script), e duplicá-la aqui
+# criaria a chance de subir o chart numa versão e a imagem em outra.
+appVersion: "0.0.0"

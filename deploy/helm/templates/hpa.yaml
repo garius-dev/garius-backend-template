@@ -1,0 +1,46 @@
+{{- if .Values.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "garius.fullname" . }}
+  labels:
+    {{- include "garius.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "garius.fullname" . }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          # Calculado sobre o `requests.cpu` — não sobre o limite. Sem
+          # `resources.requests` definido, o HPA não tem denominador e
+          # simplesmente NÃO ESCALA, sem erro visível.
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+  behavior:
+    scaleDown:
+      # ⚠️ JANELA LONGA DE PROPÓSITO.
+      #
+      # Sem estabilização o HPA oscila: sobe no pico, desce logo em seguida, sobe
+      # de novo. E cada descida DERRUBA PODS QUE ESTAVAM SERVINDO — com o
+      # encerramento gracioso funcionando, isso é caro; sem ele, é perda de
+      # requisição.
+      #
+      # Subir é barato e deve ser rápido. Descer deve ser lento e relutante.
+      stabilizationWindowSeconds: {{ .Values.autoscaling.scaleDownStabilizationSeconds }}
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+{{- end }}

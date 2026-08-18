@@ -1,0 +1,84 @@
+{{- if .Values.migration.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "garius.fullname" . }}-migration
+  labels:
+    {{- include "garius.labels" . | nindent 4 }}
+  annotations:
+    # ─────────────────────────────────────────────────────────────────────────
+    # HOOK DE PRÉ-INSTALAÇÃO E PRÉ-UPGRADE.
+    #
+    # O Helm roda este Job ATÉ O FIM antes de tocar no Deployment. Se ele falhar,
+    # o `helm upgrade` falha e A API NÃO É ATUALIZADA — falha fechada, o mesmo
+    # contrato do `service_completed_successfully` no compose.
+    #
+    # É um Job ÚNICO, e é isso que garante que N réplicas nunca disputem um
+    # CREATE DATABASE nem rodem migrations concorrentes. O modo é escolhido pelo
+    # MIGRATE_ONLY, na MESMA imagem da API — ver o Dockerfile.
+    # ─────────────────────────────────────────────────────────────────────────
+    "helm.sh/hook": pre-install,pre-upgrade
+
+    # before-hook-creation: apaga o Job da execução ANTERIOR antes de criar o novo.
+    #
+    # Sem isto o segundo deploy falha com "job already exists" — nome de Job é
+    # imutável, e o Helm não o substitui sozinho. E NÃO use hook-succeeded aqui:
+    # ele apaga o Job assim que ele passa, levando junto os LOGS da migração —
+    # que é exatamente o que se quer ler quando algo dá errado depois.
+    "helm.sh/hook-delete-policy": before-hook-creation
+
+    "helm.sh/hook-weight": "-5"
+spec:
+  backoffLimit: {{ .Values.migration.backoffLimit }}
+
+  # Sem TTL: o Job fica no cluster depois de terminar, e os logs junto. Um
+  # `ttlSecondsAfterFinished` curto apagaria a única evidência de o que a migração
+  # fez, e é ela que se procura quando o schema não bate com o esperado.
+  template:
+    metadata:
+      labels:
+        {{- include "garius.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migration
+    spec:
+      # Never, não OnFailure: quem controla a repetição é o backoffLimit do Job.
+      # Com OnFailure o kubelet reinicia o container no mesmo pod e o backoffLimit
+      # não conta direito — uma migração quebrada ficaria em loop.
+      restartPolicy: Never
+
+      serviceAccountName: {{ include "garius.serviceAccountName" . }}
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1654
+        fsGroup: 1654
+
+      volumes:
+        {{- include "garius.volumes" . | nindent 8 }}
+
+      containers:
+        - name: migration
+          image: {{ include "garius.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+
+          # O MESMO contexto de segurança da API. Um Job de migração com
+          # privilégio a mais é a porta que ninguém audita — e ele conecta no
+          # banco como SUPERUSUÁRIO, então é o processo mais sensível do deploy.
+          securityContext:
+            {{- include "garius.containerSecurityContext" . | nindent 12 }}
+
+          env:
+            {{- include "garius.commonEnv" . | nindent 12 }}
+            # A ÚNICA diferença entre este container e o da API.
+            # Ver PersistenceExtensions.MigrateOnlyKey: o nome desta variável tem
+            # uma definição só, no código, porque no template anterior o compose
+            # mandava MIGRATE_ONLY e o código lia MIGRATION_ONLY — uma letra que
+            # fazia o deploy falhar 100% das vezes no primeiro boot.
+            - name: MIGRATE_ONLY
+              value: "true"
+
+          volumeMounts:
+            {{- include "garius.volumeMounts" . | nindent 12 }}
+
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+{{- end }}
