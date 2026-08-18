@@ -61,13 +61,18 @@ public static class PersistenceExtensions
     /// Avisa quando o host do secret é trocado por <c>localhost</c> (dev fora do Docker). O
     /// <c>Program</c> o liga ao log — esta camada não conhece o logger. Ver DockerAwareHost.
     /// </param>
+    /// <param name="onCapacityWarning">
+    /// Avisa quando <c>réplicas × pool</c> se aproxima do <c>max_connections</c> do Postgres.
+    /// Pelo mesmo motivo do <paramref name="onHostResolved"/>: esta camada não conhece o logger.
+    /// </param>
     public static DatabaseNaming AddPersistence(
         this IServiceCollection services,
         IConfiguration configuration,
         IHostEnvironment environment,
         Assembly applicationAssembly,
         bool migrateOnly,
-        Action<string, string, string>? onHostResolved = null)
+        Action<string, string, string>? onHostResolved = null,
+        Action<string>? onCapacityWarning = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
@@ -96,6 +101,8 @@ public static class PersistenceExtensions
 
         var naming = new DatabaseNaming(options, applicationAssembly);
         services.AddSingleton(naming);
+
+        WarnIfConnectionCeilingIsNear(options, onCapacityWarning);
 
         RegisterTenantResolver(services, configuration, migrateOnly);
 
@@ -164,6 +171,62 @@ public static class PersistenceExtensions
         }
 
         return naming;
+    }
+
+    /// <summary>
+    /// Avisa — <b>alto</b>, no boot — quando <c>réplicas × pool</c> chega perto do
+    /// <c>max_connections</c> do Postgres.
+    ///
+    /// <para>
+    /// <b>Por que AVISO e não falha fechada.</b> O template falha fechado em <i>configuração
+    /// inválida</i> (regra 9), e isto não é uma: é um alerta de <b>capacidade</b>, sobre um
+    /// número (<c>ExpectedReplicas</c>) que a aplicação não tem como verificar — ela não sabe
+    /// quantas réplicas o cluster vai criar. Derrubar o boot por causa de uma estimativa
+    /// impediria de subir uma app perfeitamente saudável.
+    /// </para>
+    ///
+    /// <para>
+    /// O que este aviso compra é o <b>tempo</b>: sem ele, o estouro só aparece quando o HPA
+    /// escala no pico, o Postgres recusa conexão com <c>too many clients already</c>, e o erro
+    /// chega junto com o incidente que causou o pico — parecendo consequência dele, não causa.
+    /// </para>
+    /// </summary>
+    private static void WarnIfConnectionCeilingIsNear(
+        DatabaseOptions options,
+        Action<string>? onCapacityWarning)
+    {
+        // Sem estimativa de réplicas, não há o que calcular. Num template, chutar a topologia
+        // de quem deriva seria gritar errado — e um alarme que toca à toa é um alarme que
+        // ninguém olha.
+        if (options.ExpectedReplicas <= 0 || onCapacityWarning is null)
+        {
+            return;
+        }
+
+        // O Hangfire mantém o PRÓPRIO pool, no banco dele — ver HangfireSetup, onde o
+        // WorkerCount é limitado a 8 exatamente por causa desta conta.
+        const int HangfirePoolPerReplica = 8;
+
+        // +5 para o container de migração e a folga de conexões administrativas (o psql de
+        // alguém investigando, o pg_dump do backup). Esquecer essa folga é descobrir que não
+        // dá para entrar no banco justamente durante o incidente.
+        var estimated = options.ExpectedReplicas * (options.MaxPoolSize + HangfirePoolPerReplica) + 5;
+
+        var threshold = options.PostgresMaxConnections * 0.7;
+
+        if (estimated <= threshold)
+        {
+            return;
+        }
+
+        onCapacityWarning(
+            $"Capacidade de conexões: {options.ExpectedReplicas} réplica(s) × " +
+            $"({options.MaxPoolSize} do pool + {HangfirePoolPerReplica} do Hangfire) + 5 = " +
+            $"~{estimated} conexões, contra max_connections={options.PostgresMaxConnections}. " +
+            "Isto NÃO falha em teste nem com uma réplica — falha quando o autoscaler escala no " +
+            "pico, e o 'too many clients already' chega junto com o incidente que causou o pico. " +
+            "Reduza Database:MaxPoolSize, aumente o max_connections, ou ponha um pooler " +
+            "(pgBouncer/PgCat) na frente.");
     }
 
     private static void RegisterTenantResolver(
