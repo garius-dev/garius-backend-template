@@ -1,5 +1,6 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text.Json;
+using Garius.Api.Infrastructure.Errors;
 using Garius.Api.Infrastructure.Networking;
 using Garius.Core.Results;
 using Garius.Infrastructure.RateLimiting;
@@ -119,7 +120,11 @@ internal sealed class RateLimitMiddleware(
             status = StatusCodes.Status429TooManyRequests,
             detail = error.Message,
             code = error.Code,
-            traceId = context.TraceIdentifier
+            // O MESMO traceId de todo o resto da API (ver ProblemDetailsFactory.GetTraceId):
+            // o do Activity corrente, em formato W3C. O context.TraceIdentifier cru tem OUTRO
+            // formato, e um cliente que reportasse esse valor mandaria o operador procurar no
+            // Grafana por algo que não existe lá.
+            traceId = ProblemDetailsFactory.GetTraceId(context)
         }), context.RequestAborted);
     }
 }
