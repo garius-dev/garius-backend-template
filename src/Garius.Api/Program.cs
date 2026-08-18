@@ -107,6 +107,32 @@ if (migrateOnly)
 builder.Services.Configure<SecurityOptions>(
     builder.Configuration.GetSection(SecurityOptions.SectionName));
 
+// ENCERRAMENTO GRACIOSO. O tempo que a aplicação tem, depois do SIGTERM, para terminar o que
+// já está em andamento antes de o host desistir e derrubar tudo.
+//
+// ⚠️ ESTE NÚMERO NÃO VIVE SOZINHO. Ele tem de caber dentro do terminationGracePeriodSeconds
+// do Kubernetes, junto com o preStop:
+//
+//     preStop (5s) + ShutdownTimeout (30s) < terminationGracePeriodSeconds (45s)
+//
+// Se a soma passar do grace period, o Kubernetes manda SIGKILL no meio da drenagem e todo o
+// esforço de encerrar com elegância é perdido — requisição em andamento morre, job do
+// Hangfire morre no meio. Ver deploy/helm (Fase 3) e o README.
+//
+// O preStop existe porque o Kubernetes remove o endpoint do Service em PARALELO ao SIGTERM, e
+// essa remoção leva alguns segundos para se propagar. Ver ShutdownState.
+builder.Services.Configure<HostOptions>(options =>
+{
+    options.ShutdownTimeout = TimeSpan.FromSeconds(
+        builder.Configuration.GetValue("Host:ShutdownTimeoutSeconds", 30));
+
+    // Um BackgroundService que estoura uma exceção DERRUBA a aplicação, em vez de sumir em
+    // silêncio (que é o default do .NET desde o 6). Um serviço de background morto sem
+    // ninguém saber é a definição de falha silenciosa: o pod segue "saudável", respondendo
+    // HTTP, e o trabalho de fundo simplesmente parou de acontecer.
+    options.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.StopHost;
+});
+
 builder.ConfigureKestrelLimits();
 
 builder.Services.AddConfiguredForwardedHeaders(builder.Configuration, builder.Environment);
