@@ -42,6 +42,13 @@ public sealed class RateLimitedApiFactory : ApiFactory
 
         SetVariable("RateLimit__Token__PermitLimit", "2");
         SetVariable("RateLimit__Token__WindowSeconds", "60");
+
+        // A camada por IDENTIDADE. Fica DESLIGADA por padrão nesta fábrica: ela roda depois
+        // da autorização e contaria as requisições dos testes de login (que são anônimas até
+        // o 401) de um jeito que confundiria qual limite mordeu.
+        //
+        // Os testes que a exercitam a ligam por conta própria — ver IdentityRateLimitTests.
+        SetVariable("RateLimit__Identity__Enabled", "false");
     }
 
     /// <summary>
