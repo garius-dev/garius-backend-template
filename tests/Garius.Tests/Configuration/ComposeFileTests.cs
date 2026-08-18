@@ -63,10 +63,25 @@ public class ComposeFileTests
                  para descobrir.
                  """);
 
-            // E o healthcheck tem de sobreviver inteiro. Ele contém `Host: localhost` — aquele
-            // `:` é exatamente o que quebrava o YAML, e é o que as aspas protegem.
-            output.ShouldContain("/health/live");
-            output.ShouldContain("200 OK");
+            // ⚠️ NÃO PODE haver healthcheck aqui.
+            //
+            // Ele existia, e fazia a requisição com o /dev/tcp do bash. A imagem de runtime
+            // virou CHISELED (ver Dockerfile): sem shell, sem bash, sem curl. O comando não
+            // teria com o que rodar.
+            //
+            // E o modo de falha seria traiçoeiro: o Docker marcaria o container como
+            // `unhealthy` PARA SEMPRE — porque o COMANDO falha, não porque a aplicação está
+            // doente. Um container saudável eternamente marcado como quebrado, e a "correção"
+            // tentadora seria apagar o healthcheck sem entender o motivo.
+            //
+            // Este teste trava o par: se alguém reintroduzir o healthcheck sem trocar a imagem
+            // base de volta, ele acusa aqui — e não em produção.
+            output.ShouldNotContain(
+                "healthcheck",
+                Case.Insensitive,
+                "a imagem chiseled não tem shell: um healthcheck no compose marcaria o " +
+                "container como unhealthy para sempre. Quem checa a saúde é quem está de " +
+                "FORA — a httpGet probe no Kubernetes, o Traefik aqui");
         }
         finally
         {

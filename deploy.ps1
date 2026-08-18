@@ -193,6 +193,60 @@ if ($LASTEXITCODE -ne 0) { Die 'docker push falhou. Você fez `docker login`?' }
 
 Write-Ok 'Publicada.'
 
+# --- 5b. Proveniência: SBOM e assinatura -------------------------------------
+#
+# O SBOM (lista de tudo que está dentro da imagem) é o que responde, em minutos,
+# "estamos expostos a esta CVE que acabou de sair?". Sem ele a resposta exige
+# reconstruir a imagem e vasculhar à mão — e a pergunta sempre chega com pressa.
+#
+# A assinatura responde a outra: "esta imagem é mesmo a que NÓS publicamos?".
+# Sem ela, quem conseguir escrever no registry substitui o binário e o cluster
+# puxa sem reclamar.
+#
+# ⚠️ OS DOIS SÃO OPCIONAIS DE PROPÓSITO. Faltando a ferramenta, o deploy AVISA e
+# segue. Travar a publicação porque o syft não está instalado transformaria uma
+# melhoria de supply chain num bloqueio de release — e a reação previsível seria
+# alguém arrancar o passo inteiro do script.
+$sbomPath = Join-Path $root "sbom-$Version.spdx.json"
+
+if (Get-Command syft -ErrorAction SilentlyContinue) {
+    Write-Step 'SBOM'
+
+    syft $image -o spdx-json="$sbomPath" 2>&1 | Out-Null
+
+    if ($LASTEXITCODE -eq 0) {
+        Write-Ok "SBOM: $sbomPath"
+    } else {
+        Write-Host '  AVISO  syft falhou. Seguindo sem SBOM.' -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "`n  AVISO  syft não instalado — imagem publicada SEM SBOM." -ForegroundColor Yellow
+    Write-Host '         https://github.com/anchore/syft' -ForegroundColor DarkGray
+}
+
+if (Get-Command cosign -ErrorAction SilentlyContinue) {
+    Write-Step 'Assinatura (cosign)'
+
+    # Keyless: a identidade vem do OIDC e o registro vai para o log público de
+    # transparência (Rekor). Não há chave privada para guardar — nem para vazar.
+    cosign sign --yes $image
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host '  AVISO  cosign sign falhou. A imagem está publicada, mas NÃO assinada.' -ForegroundColor Yellow
+    } else {
+        Write-Ok 'Assinada.'
+
+        if (Test-Path $sbomPath) {
+            # Prende o SBOM à imagem no próprio registry: o SBOM que vive só na
+            # máquina de quem publicou não serve a mais ninguém.
+            cosign attest --yes --predicate "$sbomPath" --type spdxjson $image 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) { Write-Ok 'SBOM anexado à imagem.' }
+        }
+    }
+} else {
+    Write-Host "`n  AVISO  cosign não instalado — imagem publicada SEM assinatura." -ForegroundColor Yellow
+    Write-Host '         https://github.com/sigstore/cosign' -ForegroundColor DarkGray
+}
+
 if ($NoDeploy) {
     Write-Host "`nPublicada. Sem deploy (-NoDeploy)." -ForegroundColor Gray
     exit 0

@@ -71,28 +71,25 @@ services:
       #
       # Quem resolve a permissão é o deploy.ps1, no arquivo (ver o chmod lá).
       - gcp_service_account
-    healthcheck:
-      # Bate em /health/live — o endpoint que EXISTE (ver HealthSetup.cs). Não é
-      # /healthz: esse nunca existiu neste template, e um healthcheck apontado
-      # para um 404 fica unhealthy para sempre, ou (pior) alguém "conserta"
-      # apagando o healthcheck.
-      #
-      # Faz a requisição com o /dev/tcp do bash porque a imagem `aspnet` não tem
-      # curl nem wget, e instalá-los só para isto engorda o runtime e amplia a
-      # superfície. O `grep` no status é o que dá DENTES ao teste: sem ele, um
-      # 404 ou um 503 também "conectam" e passariam.
-      # ⚠️ O comando vai entre ASPAS. Sem elas, o YAML vê o `: ` de "Host: localhost" e tenta
-      # ler um mapeamento no meio da string — morrendo com
-      # "mapping values are not allowed in this context".
-      test:
-        - CMD
-        - bash
-        - -c
-        - "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /health/live HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
+    # ⚠️ SEM HEALTHCHECK AQUI — e a ausência é deliberada, não esquecimento.
+    #
+    # A imagem de runtime é CHISELED (ver Dockerfile): ela não tem shell, nem bash,
+    # nem curl, nem wget. Não existe nada dentro do container com que fazer uma
+    # requisição HTTP.
+    #
+    # A versão anterior usava `bash -c` com o /dev/tcp, e ela PARARIA DE FUNCIONAR
+    # em silêncio: o Docker marcaria o container como `unhealthy` para sempre —
+    # porque o COMANDO falha, não porque a aplicação está doente. O sintoma seria um
+    # container saudável eternamente marcado como quebrado, e a "correção" tentadora
+    # seria apagar o healthcheck sem entender o motivo.
+    #
+    # Quem checa a saúde é quem está DE FORA:
+    #   - em Kubernetes, a httpGet probe (ver deploy/helm) — ela não depende de nada
+    #     dentro do container, que é justamente a vantagem;
+    #   - aqui, o Traefik, que já tira do balanceamento quem não responde.
+    #
+    # Se você PRECISAR de healthcheck no compose, volte a imagem base para a variante
+    # não-chiseled no Dockerfile — e aceite a superfície de ataque maior.
     labels:
       - traefik.enable=true
 
