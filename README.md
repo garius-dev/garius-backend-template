@@ -1291,6 +1291,62 @@ api.seudominio.com  →  Cloudflare DNS → Traefik → container
 
 Mesmo apex nos dois lados = **same-site**: o cookie de autenticação usa `SameSite=Lax` e não briga com o ITP do Safari. Se o frontend for para um domínio realmente distinto (`*.pages.dev`), o cookie vira cross-site e o modelo de autenticação precisa ser revisto.
 
+### Encerramento gracioso (e as três probes)
+
+Isto importa em **qualquer** orquestrador — Kubernetes, Swarm, ou um compose com `--force-recreate`.
+
+Quando o orquestrador remove uma instância, ele manda `SIGTERM` **e** tira o endereço do balanceamento **ao mesmo tempo**. A segunda parte não é instantânea: ela leva de um a alguns segundos para se propagar. Nessa janela a instância já está encerrando e o balanceador **ainda manda tráfego** — e cada requisição que cai aí é um erro para um cliente real. Acontece em *todo* deploy.
+
+O template resolve isso assim: no `SIGTERM`, o `/health/ready` passa a **reprovar imediatamente** (sai do balanceamento), enquanto a aplicação **continua servindo** o que já está em andamento. Ver `ShutdownState`.
+
+As três probes têm efeitos diferentes, e **trocá-las tem consequência severa**:
+
+| Probe | Pergunta | Efeito se reprovar |
+|---|---|---|
+| `/health/startup` | já subiu? | o orquestrador **espera** (não mata durante um boot lento) |
+| `/health/live` | o processo está vivo? | **reinicia** o container |
+| `/health/ready` | pronto para tráfego? | **tira do balanceamento** (não reinicia) |
+
+> **Por que o liveness não checa o banco.** Se ele checasse, uma queda do Postgres viraria um *restart loop* de toda a frota — e reiniciar container não conserta banco de dados. Pior: o `CrashLoopBackOff` atrasa a recuperação mesmo depois de o banco voltar. O liveness é um predicado vazio de propósito.
+
+> **Por que o Postgres é `Degraded` e o Redis é `Unhealthy` no readiness.** Sem Redis a aplicação não lê o cookie (o keyring do DataProtection vive nele), então ela não serve praticamente nada. Sem Postgres ela ainda serve o que não toca o banco. Se um Postgres que pisca por 10s reprovasse o readiness, **todas** as réplicas sairiam do balanceamento juntas e o ingress responderia 503 para 100% do tráfego.
+
+O readiness é **cacheado por 3 segundos** (`ReadinessCache`). Com N réplicas e um período de probe de poucos segundos, o health check sozinho faria dezenas de consultas por minuto ao Postgres e ao Redis — e quando o banco está sofrendo, que é quando o readiness importa, esse tráfego extra **piora** o problema que ele deveria só observar.
+
+#### Os tempos precisam fechar
+
+```
+preStop (5s) + Host:ShutdownTimeoutSeconds (30s) < terminationGracePeriodSeconds (45s)
+```
+
+Se a soma passar do grace period, o orquestrador manda `SIGKILL` no meio da drenagem e **todo o mecanismo é perdido** — requisição em andamento morre, job do Hangfire morre no meio. O `preStop` existe para cobrir a propagação da remoção do endpoint.
+
+| Configuração | Default | Para quê |
+|---|---|---|
+| `Host:ShutdownTimeoutSeconds` | `30` | quanto a aplicação tem para drenar depois do `SIGTERM` |
+
+### Resiliência a failover do banco
+
+O `DbContext` liga `EnableRetryOnFailure`. Em Postgres local isso parece supérfluo; em nuvem gerenciada (Cloud SQL, RDS, Aurora) **não é**: um failover derruba as conexões por 5 a 30 segundos, e isso é rotina — acontece em manutenção programada do provedor. Sem retry, toda manutenção vira uma janela de 500.
+
+> ### ⚠️ Retry ligado **proíbe** transação explícita
+>
+> Com `EnableRetryOnFailure`, o EF recusa `BeginTransaction` — ele não sabe reexecutar um bloco aberto à mão. Quem precisa de transação tem de pedir a *execution strategy*:
+>
+> ```csharp
+> var strategy = db.Database.CreateExecutionStrategy();
+> await strategy.ExecuteAsync(() => /* transação aqui */);
+> ```
+>
+> O erro, se você esquecer, é claro — mas só aparece em **runtime**, quando aquele caminho executa. O `OutboxProcessor` é o único lugar do template que abre transação, e ele já faz isso certo.
+>
+> E há um efeito colateral não óbvio: numa reexecução, as entidades da tentativa anterior continuam no `ChangeTracker`. Sem um `ChangeTracker.Clear()` no início do bloco, um contador incrementado na tentativa que falhou seria somado de novo. Ver `OutboxProcessor.ProcessBatchAsync`.
+
+| Configuração | Default | Para quê |
+|---|---|---|
+| `Database:MaxRetryCount` | `3` | tentativas em falha transitória |
+| `Database:MaxRetryDelaySeconds` | `5` | teto do backoff exponencial |
+
 ---
 
 ## Desenvolvimento local
@@ -1321,8 +1377,9 @@ Um boot saudável termina assim — **duas** linhas:
 | Endpoint | Para quê |
 |---|---|
 | `/` | ping |
+| `/health/startup` | já terminou de subir? (startup probe) |
 | `/health/live` | o processo está vivo (não toca em dependências) |
-| `/health/ready` | pronto para tráfego (checa Postgres e Redis) |
+| `/health/ready` | pronto para tráfego (checa Postgres e Redis, e sabe se está encerrando) |
 | `/health/detail` | diagnóstico — exige `X-Health-Key`; em produção, sem chave configurada, **não existe** |
 
 Os testes do Secret Manager rodam contra o **GCP real** e são pulados automaticamente se não houver `GOOGLE_APPLICATION_CREDENTIALS` na máquina.
