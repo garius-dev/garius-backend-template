@@ -1,4 +1,4 @@
-# Garius Backend Template
+﻿# Garius Backend Template
 
 Template backend .NET 10 para APIs de produção. Foco em segurança e integração limpa com o frontend, sem overengineering.
 
@@ -1324,6 +1324,69 @@ Se a soma passar do grace period, o orquestrador manda `SIGKILL` no meio da dren
 | Configuração | Default | Para quê |
 |---|---|---|
 | `Host:ShutdownTimeoutSeconds` | `30` | quanto a aplicação tem para drenar depois do `SIGTERM` |
+
+### Observabilidade: três sinais, não um
+
+O Serilog cobre **log**. Ele responde *o que aconteceu*. Não responde *onde foi o tempo* — e num
+incidente de latência é essa a pergunta.
+
+O template exporta os três sinais por **OpenTelemetry**, que é vendor-neutral: o mesmo código vai
+para Grafana Tempo, Jaeger ou Datadog trocando uma variável.
+
+| Sinal | Quem produz | Responde |
+|---|---|---|
+| Log | Serilog → Loki | o que aconteceu |
+| Traço | OTel (ASP.NET, HttpClient, Npgsql) | **onde foi o tempo** |
+| Métrica | OTel (RED por endpoint, runtime, pool do Npgsql) | como está agora |
+
+> **O `traceId` da resposta é o do traço.** Todo envelope e todo ProblemDetails carrega um
+> `traceId` no formato W3C (32 hex) — o **mesmo** que vai para o Tempo. O cliente reporta esse
+> valor e o operador acha exatamente aquele request. É o que fecha o ciclo de um incidente.
+
+> **As probes não são instrumentadas.** O kubelet chama o readiness de cada réplica a cada poucos
+> segundos: instrumentá-las faria delas a maioria esmagadora dos traços, afogando os requests
+> reais e inflando a conta do backend.
+
+| Configuração | Default | Para quê |
+|---|---|---|
+| `Observability:Enabled` | `true` | liga a instrumentação |
+| `Observability:OtlpEndpoint` | `""` | para onde exportar. **Vazio = não exporta** |
+| `Observability:SamplingRatio` | `1.0` | fração amostrada. Em produção sob volume, baixe para `0.1` |
+
+> **Aqui a falha é ABERTA — a única exceção à regra 9.** Sem `OtlpEndpoint`, a aplicação sobe e
+> não exporta. Derrubar a API porque o collector saiu do ar seria trocar um problema de
+> observabilidade por uma indisponibilidade. (O Loki é diferente e continua falhando fechado: lá
+> alguém pediu log com `Enabled: true`, e o modo de falha era pior — a aplicação subia *parecendo*
+> ter observabilidade, e o Loki ficava vazio.)
+
+### O outbox precisa ser vigiado
+
+O drenador engole exceções de propósito — uma mensagem envenenada não pode derrubar o lote. O
+preço é que uma mensagem que **esgota as tentativas** sai do `WHERE` do drenador e **some**: fica
+um `Error` no Loki e nada mais. O evento nunca vai acontecer, e nada avisa.
+
+O health check `outbox` (visível em `/health/detail`) fecha esse buraco:
+
+| Estado | Quando | O que significa |
+|---|---|---|
+| `Healthy` | fila andando | normal |
+| `Degraded` | pendente há mais de `StaleAfterMinutes` | a fila parou de andar — investigue |
+| `Unhealthy` | há mensagem que esgotou as tentativas | **evento perdido** |
+
+> **Ele não entra no readiness, de propósito.** Um outbox atrasado não impede servir HTTP —
+> e como todas as réplicas compartilham a mesma fila, elas sairiam do balanceamento *todas
+> juntas*. O alerta sai do `/health/detail`, não do balanceador.
+
+> ### ⚠️ `BatchSize` é um teto de throughput
+>
+> Com o job de minuto em minuto, o máximo é `BatchSize × 60` mensagens por hora — **6.000/h** no
+> default. Acima disso a fila cresce sem limite. O sintoma é a idade da mensagem mais antiga
+> subindo, que é justamente o que o health check observa.
+
+| Configuração | Default | Para quê |
+|---|---|---|
+| `Outbox:BatchSize` | `100` | mensagens por rodada (ver o teto acima) |
+| `Outbox:StaleAfterMinutes` | `15` | a partir de quando uma pendente indica fila travada |
 
 ### Resiliência a failover do banco
 
