@@ -1291,6 +1291,125 @@ api.seudominio.com  →  Cloudflare DNS → Traefik → container
 
 Mesmo apex nos dois lados = **same-site**: o cookie de autenticação usa `SameSite=Lax` e não briga com o ITP do Safari. Se o frontend for para um domínio realmente distinto (`*.pages.dev`), o cookie vira cross-site e o modelo de autenticação precisa ser revisto.
 
+### Encerramento gracioso (e as três probes)
+
+Isto importa em **qualquer** orquestrador — Kubernetes, Swarm, ou um compose com `--force-recreate`.
+
+Quando o orquestrador remove uma instância, ele manda `SIGTERM` **e** tira o endereço do balanceamento **ao mesmo tempo**. A segunda parte não é instantânea: ela leva de um a alguns segundos para se propagar. Nessa janela a instância já está encerrando e o balanceador **ainda manda tráfego** — e cada requisição que cai aí é um erro para um cliente real. Acontece em *todo* deploy.
+
+O template resolve isso assim: no `SIGTERM`, o `/health/ready` passa a **reprovar imediatamente** (sai do balanceamento), enquanto a aplicação **continua servindo** o que já está em andamento. Ver `ShutdownState`.
+
+As três probes têm efeitos diferentes, e **trocá-las tem consequência severa**:
+
+| Probe | Pergunta | Efeito se reprovar |
+|---|---|---|
+| `/health/startup` | já subiu? | o orquestrador **espera** (não mata durante um boot lento) |
+| `/health/live` | o processo está vivo? | **reinicia** o container |
+| `/health/ready` | pronto para tráfego? | **tira do balanceamento** (não reinicia) |
+
+> **Por que o liveness não checa o banco.** Se ele checasse, uma queda do Postgres viraria um *restart loop* de toda a frota — e reiniciar container não conserta banco de dados. Pior: o `CrashLoopBackOff` atrasa a recuperação mesmo depois de o banco voltar. O liveness é um predicado vazio de propósito.
+
+> **Por que o Postgres é `Degraded` e o Redis é `Unhealthy` no readiness.** Sem Redis a aplicação não lê o cookie (o keyring do DataProtection vive nele), então ela não serve praticamente nada. Sem Postgres ela ainda serve o que não toca o banco. Se um Postgres que pisca por 10s reprovasse o readiness, **todas** as réplicas sairiam do balanceamento juntas e o ingress responderia 503 para 100% do tráfego.
+
+O readiness é **cacheado por 3 segundos** (`ReadinessCache`). Com N réplicas e um período de probe de poucos segundos, o health check sozinho faria dezenas de consultas por minuto ao Postgres e ao Redis — e quando o banco está sofrendo, que é quando o readiness importa, esse tráfego extra **piora** o problema que ele deveria só observar.
+
+#### Os tempos precisam fechar
+
+```
+preStop (5s) + Host:ShutdownTimeoutSeconds (30s) < terminationGracePeriodSeconds (45s)
+```
+
+Se a soma passar do grace period, o orquestrador manda `SIGKILL` no meio da drenagem e **todo o mecanismo é perdido** — requisição em andamento morre, job do Hangfire morre no meio. O `preStop` existe para cobrir a propagação da remoção do endpoint.
+
+| Configuração | Default | Para quê |
+|---|---|---|
+| `Host:ShutdownTimeoutSeconds` | `30` | quanto a aplicação tem para drenar depois do `SIGTERM` |
+
+### Observabilidade: três sinais, não um
+
+O Serilog cobre **log**. Ele responde *o que aconteceu*. Não responde *onde foi o tempo* — e num
+incidente de latência é essa a pergunta.
+
+O template exporta os três sinais por **OpenTelemetry**, que é vendor-neutral: o mesmo código vai
+para Grafana Tempo, Jaeger ou Datadog trocando uma variável.
+
+| Sinal | Quem produz | Responde |
+|---|---|---|
+| Log | Serilog → Loki | o que aconteceu |
+| Traço | OTel (ASP.NET, HttpClient, Npgsql) | **onde foi o tempo** |
+| Métrica | OTel (RED por endpoint, runtime, pool do Npgsql) | como está agora |
+
+> **O `traceId` da resposta é o do traço.** Todo envelope e todo ProblemDetails carrega um
+> `traceId` no formato W3C (32 hex) — o **mesmo** que vai para o Tempo. O cliente reporta esse
+> valor e o operador acha exatamente aquele request. É o que fecha o ciclo de um incidente.
+
+> **As probes não são instrumentadas.** O kubelet chama o readiness de cada réplica a cada poucos
+> segundos: instrumentá-las faria delas a maioria esmagadora dos traços, afogando os requests
+> reais e inflando a conta do backend.
+
+| Configuração | Default | Para quê |
+|---|---|---|
+| `Observability:Enabled` | `true` | liga a instrumentação |
+| `Observability:OtlpEndpoint` | `""` | para onde exportar. **Vazio = não exporta** |
+| `Observability:SamplingRatio` | `1.0` | fração amostrada. Em produção sob volume, baixe para `0.1` |
+
+> **Aqui a falha é ABERTA — a única exceção à regra 9.** Sem `OtlpEndpoint`, a aplicação sobe e
+> não exporta. Derrubar a API porque o collector saiu do ar seria trocar um problema de
+> observabilidade por uma indisponibilidade. (O Loki é diferente e continua falhando fechado: lá
+> alguém pediu log com `Enabled: true`, e o modo de falha era pior — a aplicação subia *parecendo*
+> ter observabilidade, e o Loki ficava vazio.)
+
+### O outbox precisa ser vigiado
+
+O drenador engole exceções de propósito — uma mensagem envenenada não pode derrubar o lote. O
+preço é que uma mensagem que **esgota as tentativas** sai do `WHERE` do drenador e **some**: fica
+um `Error` no Loki e nada mais. O evento nunca vai acontecer, e nada avisa.
+
+O health check `outbox` (visível em `/health/detail`) fecha esse buraco:
+
+| Estado | Quando | O que significa |
+|---|---|---|
+| `Healthy` | fila andando | normal |
+| `Degraded` | pendente há mais de `StaleAfterMinutes` | a fila parou de andar — investigue |
+| `Unhealthy` | há mensagem que esgotou as tentativas | **evento perdido** |
+
+> **Ele não entra no readiness, de propósito.** Um outbox atrasado não impede servir HTTP —
+> e como todas as réplicas compartilham a mesma fila, elas sairiam do balanceamento *todas
+> juntas*. O alerta sai do `/health/detail`, não do balanceador.
+
+> ### ⚠️ `BatchSize` é um teto de throughput
+>
+> Com o job de minuto em minuto, o máximo é `BatchSize × 60` mensagens por hora — **6.000/h** no
+> default. Acima disso a fila cresce sem limite. O sintoma é a idade da mensagem mais antiga
+> subindo, que é justamente o que o health check observa.
+
+| Configuração | Default | Para quê |
+|---|---|---|
+| `Outbox:BatchSize` | `100` | mensagens por rodada (ver o teto acima) |
+| `Outbox:StaleAfterMinutes` | `15` | a partir de quando uma pendente indica fila travada |
+
+### Resiliência a failover do banco
+
+O `DbContext` liga `EnableRetryOnFailure`. Em Postgres local isso parece supérfluo; em nuvem gerenciada (Cloud SQL, RDS, Aurora) **não é**: um failover derruba as conexões por 5 a 30 segundos, e isso é rotina — acontece em manutenção programada do provedor. Sem retry, toda manutenção vira uma janela de 500.
+
+> ### ⚠️ Retry ligado **proíbe** transação explícita
+>
+> Com `EnableRetryOnFailure`, o EF recusa `BeginTransaction` — ele não sabe reexecutar um bloco aberto à mão. Quem precisa de transação tem de pedir a *execution strategy*:
+>
+> ```csharp
+> var strategy = db.Database.CreateExecutionStrategy();
+> await strategy.ExecuteAsync(() => /* transação aqui */);
+> ```
+>
+> O erro, se você esquecer, é claro — mas só aparece em **runtime**, quando aquele caminho executa. O `OutboxProcessor` é o único lugar do template que abre transação, e ele já faz isso certo.
+>
+> E há um efeito colateral não óbvio: numa reexecução, as entidades da tentativa anterior continuam no `ChangeTracker`. Sem um `ChangeTracker.Clear()` no início do bloco, um contador incrementado na tentativa que falhou seria somado de novo. Ver `OutboxProcessor.ProcessBatchAsync`.
+
+| Configuração | Default | Para quê |
+|---|---|---|
+| `Database:MaxRetryCount` | `3` | tentativas em falha transitória |
+| `Database:MaxRetryDelaySeconds` | `5` | teto do backoff exponencial |
+
 ---
 
 ## Desenvolvimento local
@@ -1321,8 +1440,9 @@ Um boot saudável termina assim — **duas** linhas:
 | Endpoint | Para quê |
 |---|---|
 | `/` | ping |
+| `/health/startup` | já terminou de subir? (startup probe) |
 | `/health/live` | o processo está vivo (não toca em dependências) |
-| `/health/ready` | pronto para tráfego (checa Postgres e Redis) |
+| `/health/ready` | pronto para tráfego (checa Postgres e Redis, e sabe se está encerrando) |
 | `/health/detail` | diagnóstico — exige `X-Health-Key`; em produção, sem chave configurada, **não existe** |
 
 Os testes do Secret Manager rodam contra o **GCP real** e são pulados automaticamente se não houver `GOOGLE_APPLICATION_CREDENTIALS` na máquina.

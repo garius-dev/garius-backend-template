@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Garius.Api.Infrastructure.Errors;
 using Garius.Infrastructure.Idempotency;
 
 namespace Garius.Api.Infrastructure.Idempotency;
@@ -148,7 +149,8 @@ internal sealed class IdempotencyMiddleware(
             detail = "Uma requisição com este Idempotency-Key ainda está sendo processada. " +
                      "Tente novamente em instantes.",
             code = "idempotency.in_progress",
-            traceId = context.TraceIdentifier
+            // O MESMO traceId de todo o resto da API — ver ProblemDetailsFactory.GetTraceId.
+            traceId = ProblemDetailsFactory.GetTraceId(context)
         }), context.RequestAborted);
     }
 

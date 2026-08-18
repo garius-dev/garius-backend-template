@@ -14,6 +14,7 @@ using Garius.Api.Infrastructure.Idempotency;
 using Garius.Api.Infrastructure.Jobs;
 using Garius.Api.Infrastructure.Logging;
 using Garius.Api.Infrastructure.Networking;
+using Garius.Api.Infrastructure.Observability;
 using Garius.Api.Infrastructure.RateLimiting;
 using Garius.Api.Infrastructure.Security;
 using Garius.Api.Infrastructure.Validation;
@@ -107,11 +108,44 @@ if (migrateOnly)
 builder.Services.Configure<SecurityOptions>(
     builder.Configuration.GetSection(SecurityOptions.SectionName));
 
+// ENCERRAMENTO GRACIOSO. O tempo que a aplicação tem, depois do SIGTERM, para terminar o que
+// já está em andamento antes de o host desistir e derrubar tudo.
+//
+// ⚠️ ESTE NÚMERO NÃO VIVE SOZINHO. Ele tem de caber dentro do terminationGracePeriodSeconds
+// do Kubernetes, junto com o preStop:
+//
+//     preStop (5s) + ShutdownTimeout (30s) < terminationGracePeriodSeconds (45s)
+//
+// Se a soma passar do grace period, o Kubernetes manda SIGKILL no meio da drenagem e todo o
+// esforço de encerrar com elegância é perdido — requisição em andamento morre, job do
+// Hangfire morre no meio. Ver deploy/helm (Fase 3) e o README.
+//
+// O preStop existe porque o Kubernetes remove o endpoint do Service em PARALELO ao SIGTERM, e
+// essa remoção leva alguns segundos para se propagar. Ver ShutdownState.
+builder.Services.Configure<HostOptions>(options =>
+{
+    options.ShutdownTimeout = TimeSpan.FromSeconds(
+        builder.Configuration.GetValue("Host:ShutdownTimeoutSeconds", 30));
+
+    // Um BackgroundService que estoura uma exceção DERRUBA a aplicação, em vez de sumir em
+    // silêncio (que é o default do .NET desde o 6). Um serviço de background morto sem
+    // ninguém saber é a definição de falha silenciosa: o pod segue "saudável", respondendo
+    // HTTP, e o trabalho de fundo simplesmente parou de acontecer.
+    options.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.StopHost;
+});
+
 builder.ConfigureKestrelLimits();
 
 builder.Services.AddConfiguredForwardedHeaders(builder.Configuration, builder.Environment);
 builder.Services.AddConfiguredCors(builder.Configuration, builder.Environment);
 builder.Services.AddConfiguredHealthChecks(naming);
+
+// TRAÇOS e MÉTRICAS. O Serilog (acima) cobre LOG — são três sinais distintos, e o traço é o
+// único que responde "onde foi o tempo" quando um request demora.
+//
+// Diferente do resto do template, isto DEGRADA em vez de falhar fechado: sem endpoint OTLP
+// configurado, a aplicação sobe e não exporta. Ver ObservabilitySetup.
+builder.Services.AddObservability(builder.Configuration, builder.Environment);
 
 // Redis: dependência OBRIGATÓRIA (refresh tokens + DataProtection, que cifra o cookie).
 // Também registra o DataProtection com o keyring NO REDIS — sem isso, duas réplicas não
@@ -163,7 +197,7 @@ builder.Services.AddSingleton<RedisIdempotencyStore>();
 
 // Outbox: o evento é gravado na MESMA transação do dado. Uma app derivada registra os
 // handlers com AddEventHandler<TEvento, THandler>().
-builder.Services.AddOutbox();
+builder.Services.AddOutbox(builder.Configuration);
 
 // Jobs de background. O banco (hangfire_{slug}) já é criado pelo bootstrap.
 builder.Services.AddBackgroundJobs(naming);

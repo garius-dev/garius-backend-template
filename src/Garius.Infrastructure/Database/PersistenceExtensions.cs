@@ -109,7 +109,35 @@ public static class PersistenceExtensions
         services.AddDbContext<AppDbContext>((provider, builder) =>
         {
             builder.UseNpgsql(connectionString, npgsql =>
-                npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName));
+            {
+                npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
+
+                // RESILIÊNCIA DE CONEXÃO. Retenta o que falhou por motivo TRANSITÓRIO.
+                //
+                // Em Postgres local isto parece supérfluo. Em nuvem gerenciada, não: um
+                // failover de Cloud SQL / RDS / Aurora derruba as conexões abertas por 5 a 30
+                // segundos, e isso é ROTINA — acontece em manutenção programada do provedor,
+                // sem aviso útil. Sem retry, toda manutenção do banco vira uma janela de 500
+                // para o cliente.
+                //
+                // O Npgsql já sabe distinguir o que é transitório (falha de rede, failover) do
+                // que é erro de verdade (constraint violada, sintaxe): só o primeiro grupo é
+                // retentado. Um erro de negócio NÃO é tentado de novo três vezes.
+                //
+                // ⚠️ ISTO TEM UMA CONSEQUÊNCIA QUE NÃO É ÓBVIA: com o retry ligado, o EF passa
+                // a proibir transação explícita (BeginTransaction), porque ele não sabe
+                // reexecutar um bloco que você abriu à mão. Quem precisa de transação tem de
+                // pedir a execution strategy e rodar dentro dela — ver OutboxProcessor, que é
+                // o único lugar do template que abre transação.
+                //
+                // O erro, se alguém esquecer, é claro ("The configured execution strategy
+                // 'NpgsqlRetryingExecutionStrategy' does not support user-initiated
+                // transactions") — mas só aparece em RUNTIME, quando aquele caminho executa.
+                npgsql.EnableRetryOnFailure(
+                    maxRetryCount: options.MaxRetryCount,
+                    maxRetryDelay: TimeSpan.FromSeconds(options.MaxRetryDelaySeconds),
+                    errorCodesToAdd: null);
+            });
 
             builder.AddInterceptors(provider.GetRequiredService<AuditingInterceptor>());
 

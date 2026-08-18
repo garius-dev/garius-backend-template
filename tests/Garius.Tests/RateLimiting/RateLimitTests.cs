@@ -181,4 +181,61 @@ public class RateLimitTests(RateLimitedApiFactory factory)
             "o teto global existe para conter um cliente descontrolado — um retry-loop mal " +
             "escrito, um scraper — mesmo fora dos endpoints de autenticação");
     }
+
+    /// <summary>
+    /// O 429 carrega um <c>traceId</c> <b>correlacionável</b> — o mesmo formato do resto da API.
+    ///
+    /// <para>
+    /// Este caminho é escrito à mão (o middleware corta o pipeline antes de chegar a um
+    /// endpoint), e foi justamente por isso que ele ficou para trás: usava o
+    /// <c>TraceIdentifier</c> cru do ASP.NET enquanto todo o resto já usava o W3C do
+    /// <c>Activity</c>. O cliente barrado recebia um id que não existe no Grafana — e o 429 é
+    /// dos erros que mais geram chamado.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Tem dentes:</b> troque de volta para <c>context.TraceIdentifier</c> em
+    /// <c>RateLimitMiddleware</c> e o teste falha — o formato tem 32 hex, o outro não.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task O_429_carrega_um_traceId_correlacionavel()
+    {
+        await factory.ResetRateLimitsAsync();
+
+        var client = factory.CreateClient();
+
+        var body = new { email = "qualquer@empresa.com", password = "senha-errada" };
+
+        HttpResponseMessage? blocked = null;
+
+        // O limite de /auth/login é 2 nesta fábrica: a terceira é cortada.
+        for (var i = 0; i < 5 && blocked is null; i++)
+        {
+            var response = await client.PostAsJsonAsync(
+                "/auth/login", body, TestContext.Current.CancellationToken);
+
+            if (response.StatusCode == HttpStatusCode.TooManyRequests)
+            {
+                blocked = response;
+            }
+        }
+
+        blocked.ShouldNotBeNull("o rate limit deveria ter barrado dentro de 5 tentativas");
+
+        var payload = await blocked.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(
+            TestContext.Current.CancellationToken);
+
+        var traceId = payload.GetProperty("traceId").GetString();
+
+        traceId.ShouldNotBeNullOrWhiteSpace();
+
+        traceId!.Length.ShouldBe(
+            32,
+            "o traceId do 429 tem de ser o mesmo W3C do resto da API — senão o cliente reporta " +
+            "um id que o operador não acha no Grafana, e o campo fica pior que inútil: " +
+            "parece útil");
+
+        traceId.ShouldAllBe(c => Uri.IsHexDigit(c));
+    }
 }

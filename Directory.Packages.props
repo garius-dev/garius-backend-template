@@ -87,6 +87,30 @@
     <PackageVersion Include="Serilog.Enrichers.Environment" Version="3.0.1" />
     <PackageVersion Include="AspNetCore.HealthChecks.NpgSql" Version="9.0.0" />
     <PackageVersion Include="AspNetCore.HealthChecks.Redis" Version="9.0.0" />
+
+    <!--
+      OpenTelemetry: TRAÇOS e MÉTRICAS. O Serilog cobre LOG, que é outra coisa.
+
+      Log responde "o que aconteceu"; traço responde "onde foi o tempo". Sem traço, a
+      pergunta "por que este request demorou 3s?" não tem resposta — sobra adivinhação.
+      Com ele a resposta é a decomposição: 40ms na API, 2.9s numa query, 60ms no Redis.
+
+      O OTel é vendor-neutral de propósito: o MESMO código exporta para Tempo, Jaeger ou
+      Datadog. Trocar de backend é trocar uma variável de ambiente, não reinstrumentar a
+      aplicação.
+
+      ⚠️ NÃO há OpenTelemetry.Instrumentation.StackExchangeRedis aqui, e é deliberado: ele
+      só existe em BETA (1.17.0-beta.1). Num template que serve de base para produção, uma
+      dependência beta é dívida que se multiplica por cada app derivada. O Npgsql cobre a
+      fonte dominante de latência (o banco); o Redis aparece nos traços como tempo dentro
+      do span do request. Reavaliar quando sair a estável.
+    -->
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.17.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.17.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.17.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.17.0" />
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.17.0" />
+    <PackageVersion Include="Npgsql.OpenTelemetry" Version="10.0.3" />
   </ItemGroup>
 
   <ItemGroup Label="Configuração / Secrets">
@@ -106,6 +130,31 @@
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.13.0" />
     <PackageVersion Include="Testcontainers.Redis" Version="4.13.0" />
     <PackageVersion Include="Shouldly" Version="4.3.0" />
+
+    <!--
+      FakeTimeProvider. Testar coisa com janela de tempo (o cache do readiness, a expiração
+      de token) esperando de VERDADE deixa a suíte lenta e instável — um teste que dorme 3s
+      falha sozinho numa máquina carregada. Com o TimeProvider injetado, o tempo avança por
+      chamada de método e o teste é determinístico.
+    -->
+    <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.0.0" />
+
+    <!--
+      Pin transitivo de segurança. O Testcontainers usa SSH.NET (para o modo de execução
+      remota do Docker) e arrasta a 2025.1.0, que tem vulnerabilidade HIGH
+      (GHSA-q939-rpr3-3284).
+
+      Como o build audita CVE e trata NU1903 como ERRO, a 2025.1.0 QUEBRA o build — e o
+      CentralPackageTransitivePinningEnabled (ver PropertyGroup no topo) faz esta linha valer
+      também para a dependência transitiva.
+
+      ⚠️ É teste, não produção: o SSH.NET nunca vai para a imagem. Mas o build é estrito de
+      PROPÓSITO, e a alternativa (excluir NU1903 da auditoria) desligaria o alarme para
+      TODOS os pacotes, inclusive os de produção. Pinar é o conserto; suprimir é esconder.
+
+      Remover quando o Testcontainers passar a trazer uma versão já corrigida.
+    -->
+    <PackageVersion Include="SSH.NET" Version="2026.0.0" />
   </ItemGroup>
 
 </Project>
