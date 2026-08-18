@@ -1291,6 +1291,117 @@ api.seudominio.com  →  Cloudflare DNS → Traefik → container
 
 Mesmo apex nos dois lados = **same-site**: o cookie de autenticação usa `SameSite=Lax` e não briga com o ITP do Safari. Se o frontend for para um domínio realmente distinto (`*.pages.dev`), o cookie vira cross-site e o modelo de autenticação precisa ser revisto.
 
+### Kubernetes: o chart
+
+O chart está em [`deploy/helm`](deploy/helm). Ele **não substitui** o compose — os dois modos de deploy convivem, e o compose continua sendo o caminho para VPS.
+
+```bash
+kubectl create secret generic garius-gcp-sa --from-file=key.json=<sua-service-account>
+
+helm upgrade --install garius deploy/helm   --set image.tag=v1.2.0   --set ingress.host=api.seudominio.com
+```
+
+> **A tag da imagem é obrigatória.** Sem ela o chart **recusa renderizar**. Sem esse guarda, o Helm montaria `repositorio:` e o Kubernetes leria como `:latest` — subindo uma versão que ninguém escolheu, sem erro nenhum.
+
+O que o chart traz, e por quê:
+
+| Recurso | Por que existe |
+|---|---|
+| `Job` de migração | Hook `pre-install,pre-upgrade`: roda **antes** da API, e se falhar o deploy para. Mesmo contrato do `service_completed_successfully` no compose |
+| `PodDisruptionBudget` | Sem ele, `kubectl drain` pode derrubar **todas** as réplicas de uma vez |
+| `HPA` | Scale-down com janela de 5 min: sem estabilização o HPA oscila, e cada descida derruba pods que estavam servindo |
+| `topologySpreadConstraints` | Sem isso o scheduler empilha as réplicas num nó só — e perder esse nó derruba tudo, com N réplicas "no ar" |
+| `NetworkPolicy` | Default deny. **Desligada por padrão**: uma policy errada quebra a app de um jeito confuso (o sintoma é timeout de DNS) |
+| `securityContext` | `readOnlyRootFilesystem`, `drop: ALL`, não-root |
+
+Validar sem cluster:
+
+```powershell
+./deploy/helm/validate.ps1
+```
+
+Ele roda `helm lint`, renderiza com tudo ligado, confirma que a tag é obrigatória, e passa o YAML pelo **schema real** do Kubernetes (`kubeconform`). O último passo é o que vale: um `maxUnavailble` (typo) passa pelos dois primeiros e só falha no `kubectl apply` — no meio do deploy, com a migração já rodada.
+
+> ### ⚠️ O chart exige Kubernetes 1.29+
+>
+> O `preStop` usa a action `sleep` **nativa**, e não `exec: [/bin/sleep]`. O motivo é o item seguinte: a imagem é chiseled e **não tem `/bin/sleep`**. Um preStop com `exec` falharia em silêncio (o Kubernetes só registra um evento) e a corrida do encerramento voltaria — com o manifesto parecendo correto.
+>
+> Em cluster mais antigo: volte a imagem base para a variante não-chiseled e use `exec`.
+
+### A imagem: chiseled e pinada por digest
+
+| Antes | Agora |
+|---|---|
+| `aspnet:10.0` (tag mutável) | `aspnet:10.0-noble-chiseled@sha256:…` |
+| ~91 MB só de runtime | **62 MB** com a aplicação dentro |
+| shell, apt, curl disponíveis | nada disso |
+
+**Chiseled** remove shell, gerenciador de pacotes e coreutils. Quem conseguir execução de comando dentro do container não acha `sh`, `curl` nem `cat` para escalar.
+
+**Digest** torna o build reproduzível: o mesmo commit dá a mesma imagem, sempre. O custo é real — digest fixo não recebe patch sozinho — e por isso o [`renovate.json`](renovate.json) existe. **Pinar sem automação de atualização é trocar um problema por outro.**
+
+> **Duas consequências que mordem:**
+> 1. `docker exec <container> sh` não funciona. Para depurar, use `kubectl debug` ou troque temporariamente para a variante não-chiseled.
+> 2. O healthcheck do compose **foi removido** — não havia mais com o que fazer a requisição. Quem checa a saúde é quem está de fora: a `httpGet` probe no Kubernetes, o Traefik no compose.
+
+O `deploy.ps1` gera **SBOM** (syft) e **assina** a imagem (cosign) quando as ferramentas estão instaladas. Os dois são opcionais de propósito: travar a publicação porque o `syft` não está instalado transformaria uma melhoria de supply chain num bloqueio de release — e a reação previsível seria alguém arrancar o passo do script.
+
+### Rate limit: duas dimensões
+
+| Camada | Onde no pipeline | Particiona por |
+|---|---|---|
+| Volume | **antes** da autenticação | IP real |
+| Cota | **depois** da autorização | usuário / client M2M / chave de API |
+
+Limite só por IP erra dos dois lados: pune o cliente legítimo atrás de CGNAT (milhares de pessoas dividindo um endereço, e portanto uma cota) e não contém o atacante com um `/64` de IPv6, que tem endereços de sobra para diluir o volume.
+
+A ordem de cada uma é obrigatória. A de IP fica na frente porque é a defesa contra volume e precisa ser **barata** — depois da autenticação, cada tentativa de brute force pagaria um PBKDF2 antes de ser recusada, e o rate limit viraria o vetor de DoS. A de identidade **precisa** saber quem chama, o que só existe depois da autorização.
+
+Toda resposta carrega os headers da **RFC 9331**:
+
+```
+RateLimit-Limit: 300
+RateLimit-Remaining: 42
+RateLimit-Reset: 30
+```
+
+Sem eles o integrador só descobre o limite ao bater nele, e a única estratégia que lhe resta é tentar de novo.
+
+| Configuração | Default | Para quê |
+|---|---|---|
+| `RateLimit:Identity:Enabled` | `true` | desliga só esta camada, sem derrubar a de IP |
+| `RateLimit:Identity:PermitLimit` | `300` | por credencial, por janela |
+
+### ⚠️ Conexões: a conta que ninguém faz
+
+`Database:MaxPoolSize` é **por réplica**. A conta que importa é:
+
+```
+réplicas × (MaxPoolSize + 8 do Hangfire) + 5 (migração e folga)
+```
+
+Contra um Postgres de fábrica (`max_connections=100`):
+
+| Réplicas | Pool 5 | Pool 10 | Pool 20 |
+|---|---|---|---|
+| 3 | 44 ✅ | 59 ✅ | 89 ❌ |
+| 5 | 70 ✅ | 95 ❌ | 145 ❌ |
+| 10 | 135 ❌ | 185 ❌ | 285 ❌ |
+
+**Acima de poucas réplicas, nenhum `MaxPoolSize` resolve.** Diminuir o pool até caber não é a saída: um pool pequeno demais põe as requisições na fila esperando conexão, trocando um erro visível por uma lentidão difícil de diagnosticar. A saída é **pgBouncer/PgCat** ou subir o `max_connections`.
+
+> **Isto não falha em teste nem em staging com uma réplica.** Falha quando o autoscaler escala no pico — e o `too many clients already` chega junto com o incidente que causou o pico, parecendo consequência dele.
+
+Preencha `Database:ExpectedReplicas` com o `maxReplicas` do seu HPA e a aplicação **avisa no boot** quando a conta passa de 70% do teto. É `Warning`, não falha fechada: é um alerta de capacidade sobre uma estimativa que a aplicação não tem como verificar.
+
+> **pgBouncer em modo `transaction` quebra prepared statements.** Com Npgsql, exige `Max Auto Prepare=0` ou `No Reset On Close`. É pegadinha conhecida e cara.
+
+| Configuração | Default | Para quê |
+|---|---|---|
+| `Database:MaxPoolSize` | `10` | conexões **por réplica** |
+| `Database:ExpectedReplicas` | `0` (desliga o aviso) | o `maxReplicas` do seu HPA |
+| `Database:PostgresMaxConnections` | `100` | o `max_connections` do **seu** Postgres |
+
 ### Encerramento gracioso (e as três probes)
 
 Isto importa em **qualquer** orquestrador — Kubernetes, Swarm, ou um compose com `--force-recreate`.
