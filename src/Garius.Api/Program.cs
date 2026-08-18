@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Garius.Api.Features.Auth;
@@ -14,6 +14,7 @@ using Garius.Api.Infrastructure.Idempotency;
 using Garius.Api.Infrastructure.Jobs;
 using Garius.Api.Infrastructure.Logging;
 using Garius.Api.Infrastructure.Networking;
+using Garius.Api.Infrastructure.Observability;
 using Garius.Api.Infrastructure.RateLimiting;
 using Garius.Api.Infrastructure.Security;
 using Garius.Api.Infrastructure.Validation;
@@ -139,6 +140,13 @@ builder.Services.AddConfiguredForwardedHeaders(builder.Configuration, builder.En
 builder.Services.AddConfiguredCors(builder.Configuration, builder.Environment);
 builder.Services.AddConfiguredHealthChecks(naming);
 
+// TRAÇOS e MÉTRICAS. O Serilog (acima) cobre LOG — são três sinais distintos, e o traço é o
+// único que responde "onde foi o tempo" quando um request demora.
+//
+// Diferente do resto do template, isto DEGRADA em vez de falhar fechado: sem endpoint OTLP
+// configurado, a aplicação sobe e não exporta. Ver ObservabilitySetup.
+builder.Services.AddObservability(builder.Configuration, builder.Environment);
+
 // Redis: dependência OBRIGATÓRIA (refresh tokens + DataProtection, que cifra o cookie).
 // Também registra o DataProtection com o keyring NO REDIS — sem isso, duas réplicas não
 // conseguem ler o cookie uma da outra.
@@ -189,7 +197,7 @@ builder.Services.AddSingleton<RedisIdempotencyStore>();
 
 // Outbox: o evento é gravado na MESMA transação do dado. Uma app derivada registra os
 // handlers com AddEventHandler<TEvento, THandler>().
-builder.Services.AddOutbox();
+builder.Services.AddOutbox(builder.Configuration);
 
 // Jobs de background. O banco (hangfire_{slug}) já é criado pelo bootstrap.
 builder.Services.AddBackgroundJobs(naming);

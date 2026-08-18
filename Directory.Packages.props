@@ -1,4 +1,4 @@
-<Project>
+﻿<Project>
 
   <!--
     Versionamento central de pacotes (CPM).
@@ -87,6 +87,30 @@
     <PackageVersion Include="Serilog.Enrichers.Environment" Version="3.0.1" />
     <PackageVersion Include="AspNetCore.HealthChecks.NpgSql" Version="9.0.0" />
     <PackageVersion Include="AspNetCore.HealthChecks.Redis" Version="9.0.0" />
+
+    <!--
+      OpenTelemetry: TRAÇOS e MÉTRICAS. O Serilog cobre LOG, que é outra coisa.
+
+      Log responde "o que aconteceu"; traço responde "onde foi o tempo". Sem traço, a
+      pergunta "por que este request demorou 3s?" não tem resposta — sobra adivinhação.
+      Com ele a resposta é a decomposição: 40ms na API, 2.9s numa query, 60ms no Redis.
+
+      O OTel é vendor-neutral de propósito: o MESMO código exporta para Tempo, Jaeger ou
+      Datadog. Trocar de backend é trocar uma variável de ambiente, não reinstrumentar a
+      aplicação.
+
+      ⚠️ NÃO há OpenTelemetry.Instrumentation.StackExchangeRedis aqui, e é deliberado: ele
+      só existe em BETA (1.17.0-beta.1). Num template que serve de base para produção, uma
+      dependência beta é dívida que se multiplica por cada app derivada. O Npgsql cobre a
+      fonte dominante de latência (o banco); o Redis aparece nos traços como tempo dentro
+      do span do request. Reavaliar quando sair a estável.
+    -->
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.17.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.17.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.17.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.17.0" />
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.17.0" />
+    <PackageVersion Include="Npgsql.OpenTelemetry" Version="10.0.3" />
   </ItemGroup>
 
   <ItemGroup Label="Configuração / Secrets">
